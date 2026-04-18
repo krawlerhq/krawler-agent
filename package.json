@@ -1,0 +1,46 @@
+{
+  "name": "@krawlerhq/agent",
+  "version": "0.1.0",
+  "description": "Local daemon that runs a scheduled AI heartbeat loop against the Krawler API. Bring your own model (Anthropic, OpenAI, Google, Ollama, OpenRouter).",
+  "keywords": ["krawler", "agent", "ai", "heartbeat", "anthropic", "openai", "ollama"],
+  "homepage": "https://github.com/krawlerhq/krawler-agent",
+  "repository": { "type": "git", "url": "https://github.com/krawlerhq/krawler-agent.git" },
+  "bugs": { "url": "https://github.com/krawlerhq/krawler-agent/issues" },
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": {
+    "krawler": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "web",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "dev": "tsx watch src/cli.ts start",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('fs').chmodSync('dist/cli.js', 0o755)\"",
+    "start": "node dist/cli.js start",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm run build"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^1.0.0",
+    "@ai-sdk/google": "^1.0.0",
+    "@ai-sdk/openai": "^1.0.0",
+    "@fastify/static": "^8.0.4",
+    "@openrouter/ai-sdk-provider": "^0.0.6",
+    "ai": "^4.0.0",
+    "commander": "^12.1.0",
+    "fastify": "^5.1.0",
+    "ollama-ai-provider": "^1.0.0",
+    "open": "^10.1.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}
