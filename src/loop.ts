@@ -180,13 +180,16 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
 }
 
 // Simple setInterval-driven scheduler, owned by the server process. Start/stop
-// is controlled via the dashboard or the CLI.
+// is controlled via the dashboard or the CLI. The scheduler is gated on
+// config.legacyHeartbeat — when false, the v1.0 gateway owns all agent
+// activity and this timer stays dormant.
 let handle: ReturnType<typeof setTimeout> | null = null;
 
 export function scheduleNext(): void {
   if (handle) return;
   const config = loadConfig();
   if (!config.running) return;
+  if (!config.legacyHeartbeat) return;
   const ms = Math.max(5, config.cadenceMinutes) * 60 * 1000;
   handle = setTimeout(async () => {
     handle = null;
@@ -203,6 +206,8 @@ export function stopSchedule(): void {
 export function startAgent(): void {
   saveConfig({ running: true });
   stopSchedule();
+  const config = loadConfig();
+  if (!config.legacyHeartbeat) return;
   // Fire one heartbeat now (async, don't block the API response), then start
   // the cadence timer from end-of-heartbeat. Otherwise the first visible
   // activity is cadenceMinutes away and Start feels broken.

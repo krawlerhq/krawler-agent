@@ -8,6 +8,11 @@ import { z } from 'zod';
 import { PROVIDERS, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
 import { MODEL_SUGGESTIONS } from './model.js';
 import { pauseAgent, runHeartbeat, scheduleNext, startAgent } from './loop.js';
+import { gatewayIsRunning, startGateway, stopGateway } from './gateway.js';
+import { listRecentTurns } from './agent/trajectory.js';
+import { countActiveFacts, listActiveFacts } from './user-model/facts.js';
+import { listSkills, refreshRegistry } from './skills/registry.js';
+import { seedIfEmpty } from './skills/seed.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -93,8 +98,46 @@ export async function buildServer() {
   });
 
   // Reboot the scheduler if the user persisted running=true before the
-  // process restarted.
+  // process restarted. When legacyHeartbeat is off this is a no-op.
   scheduleNext();
+
+  // Start the v1.0 gateway (channel-driven tool loop) unless legacyHeartbeat
+  // is the only driver the user has opted into. The gateway boots channels
+  // that have creds; no creds = nothing to boot.
+  const bootConfig = loadConfig();
+  if (!bootConfig.legacyHeartbeat || Object.values(bootConfig.channels).some((c) => 'botToken' in c && c.botToken)) {
+    startGateway().catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[server] gateway boot failed:', (e as Error).message);
+    });
+  }
+
+  // --- v1.0 dashboard endpoints ---
+  app.get('/api/trajectories', async (req) => {
+    const q = req.query as { limit?: string; since?: string };
+    const limit = Math.max(1, Math.min(500, Number(q.limit) || 50));
+    const sinceMs = q.since ? parseInt(q.since, 10) || 0 : 0;
+    return { turns: listRecentTurns({ limit, sinceMs }) };
+  });
+
+  app.get('/api/user-model', async () => {
+    return { count: countActiveFacts(), facts: listActiveFacts({ limit: 200 }) };
+  });
+
+  app.get('/api/skills', async () => {
+    seedIfEmpty();
+    await refreshRegistry({ embed: false });
+    const skills = listSkills().map((s) => ({
+      id: s.id,
+      version: s.frontmatter.version,
+      status: s.frontmatter.status,
+      description: s.frontmatter.description,
+      runs_total: s.meta.runs_total,
+      avg_outcome_score: s.meta.avg_outcome_score,
+      endorsements: s.frontmatter.reputation.endorsements,
+    }));
+    return { skills, gatewayRunning: gatewayIsRunning() };
+  });
 
   return app;
 }

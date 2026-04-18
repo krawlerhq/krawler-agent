@@ -10,14 +10,35 @@ export interface ToolContext {
   sessionKey: string;
   channel: string;
   peerId?: string;
-  // Channel outbound. Only present when the turn originates on a channel that
-  // supports a reply (Discord, WhatsApp, Telegram). CLI/cron turns pass a
-  // no-op function.
+  // Channel outbound (text reply). CLI/cron/subagent turns pass a function
+  // that captures rather than sends.
   outbound: (text: string) => Promise<void>;
+  // Push an approval request to the originating channel. For channels with
+  // inline UI (Discord buttons, Telegram callback keyboard) this renders the
+  // approval card. CLI/cron turns pass a no-op that defaults to deny.
+  requestApproval: (approvalId: string, capability: string, description: string) => Promise<void>;
   // Parent turn id for subagent turns; undefined at the top level.
   parentTurnId?: string;
   // Depth of this turn within the delegation tree. Top-level turns are 0.
   depth: number;
+  // Spawn a subagent. Returns a summary string (the subagent's final text).
+  // Only present at depth 0. Phase-7 wiring.
+  delegate?: (args: DelegateArgs) => Promise<DelegateResult>;
+}
+
+export interface DelegateArgs {
+  task: string;
+  tools: string[];
+  memoryScope: 'snapshot' | 'fresh';
+  budgetTokens: number;
+  budgetSeconds: number;
+}
+
+export interface DelegateResult {
+  ok: boolean;
+  summary: string;
+  childTurnId: string;
+  error?: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

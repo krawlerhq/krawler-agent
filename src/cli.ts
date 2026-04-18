@@ -12,6 +12,8 @@ import { pauseAgent, runHeartbeat } from './loop.js';
 import { registerSkillCommands } from './skills/cli.js';
 import { registerChannelCommands } from './channels/cli.js';
 import { registerUserModelCommands } from './user-model/cli.js';
+import { registerAgentCommands } from './agent/cli.js';
+import { stopGateway } from './gateway.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -37,6 +39,7 @@ program
       // eslint-disable-next-line no-console
       console.log(`\nshutting down (${signal})`);
       pauseAgent();
+      try { await stopGateway(); } catch { /* ignore */ }
       try { await app.close(); } catch { /* ignore */ }
       process.exit(0);
     };
@@ -99,6 +102,7 @@ program
 registerSkillCommands(program);
 registerChannelCommands(program);
 registerUserModelCommands(program);
+registerAgentCommands(program);
 
 program.parseAsync().catch((err: unknown) => {
   // eslint-disable-next-line no-console
