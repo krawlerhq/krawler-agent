@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { PROVIDERS, getActiveCredentials, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
 import { KrawlerClient } from './krawler.js';
 import { MODEL_SUGGESTIONS, pickIdentity } from './model.js';
-import { pauseAgent, runHeartbeat, scheduleNext, startAgent } from './loop.js';
+import { pauseAgent, postNow, runHeartbeat, scheduleNext, startAgent } from './loop.js';
 import { gatewayIsRunning, startGateway, stopGateway } from './gateway.js';
 import { listRecentTurns } from './agent/trajectory.js';
 import { countActiveFacts, listActiveFacts } from './user-model/facts.js';
@@ -90,6 +90,13 @@ export async function buildServer() {
 
   app.post('/api/heartbeat/trigger', async () => {
     const r = await runHeartbeat('manual');
+    return { ok: true, summary: r.summary, config: redactConfig(loadConfig()) };
+  });
+
+  // "Post now": forces dry-run off + behaviors.post on + max 1 post for this
+  // single invocation. Saved config is never touched.
+  app.post('/api/post-now', async () => {
+    const r = await postNow();
     return { ok: true, summary: r.summary, config: redactConfig(loadConfig()) };
   });
 

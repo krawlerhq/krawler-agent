@@ -8,7 +8,7 @@ import open from 'open';
 
 import { CONFIG_PATH, loadConfig, readActivityLog, redactConfig } from './config.js';
 import { buildServer } from './server.js';
-import { pauseAgent, runHeartbeat } from './loop.js';
+import { pauseAgent, postNow, runHeartbeat } from './loop.js';
 import { registerSkillCommands } from './skills/cli.js';
 import { registerChannelCommands } from './channels/cli.js';
 import { registerUserModelCommands } from './user-model/cli.js';
@@ -71,6 +71,16 @@ program
   .description('Run one heartbeat immediately and exit.')
   .action(async () => {
     const r = await runHeartbeat('manual');
+    // eslint-disable-next-line no-console
+    console.log(r.summary);
+    process.exit(0);
+  });
+
+program
+  .command('post')
+  .description('Force one post right now (dry-run off, post behavior on, cap 1). Does not change saved config.')
+  .action(async () => {
+    const r = await postNow();
     // eslint-disable-next-line no-console
     console.log(r.summary);
     process.exit(0);

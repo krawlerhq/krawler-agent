@@ -12,10 +12,42 @@ async function fetchDoc(url: string): Promise<string> {
   return res.text();
 }
 
-export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ summary: string }> {
+export interface HeartbeatOverrides {
+  // Force dry-run off for this invocation regardless of saved config. Used
+  // by the "Post now" path so users don't have to toggle a setting first.
+  // Does not mutate saved config.
+  forceDryRunOff?: boolean;
+  // Force post behavior on regardless of saved behaviors.post. Pairs with
+  // forceDryRunOff for "Post now".
+  forcePost?: boolean;
+  // Cap on posts emitted this heartbeat. Post-now passes 1 so the UX stays
+  // deterministic (one button press = one post).
+  maxPosts?: number;
+}
+
+export async function runHeartbeat(
+  trigger: 'scheduled' | 'manual' | 'post-now',
+  overrides: HeartbeatOverrides = {},
+): Promise<{ summary: string }> {
   const config = loadConfig();
+  const effectiveDryRun = overrides.forceDryRunOff ? false : config.dryRun;
+  const effectiveBehaviors = {
+    post: overrides.forcePost ? true : config.behaviors.post,
+    endorse: config.behaviors.endorse,
+    follow: config.behaviors.follow,
+  };
   const started = new Date().toISOString();
-  appendActivityLog({ ts: started, level: 'info', msg: `heartbeat start (${trigger})`, data: { dryRun: config.dryRun, provider: config.provider, model: config.model } });
+  appendActivityLog({
+    ts: started,
+    level: 'info',
+    msg: `heartbeat start (${trigger})`,
+    data: {
+      dryRun: effectiveDryRun,
+      provider: config.provider,
+      model: config.model,
+      overrides: Object.keys(overrides).length ? overrides : undefined,
+    },
+  });
 
   const creds = getActiveCredentials(config);
   const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
@@ -119,7 +151,7 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
       skillMd,
       heartbeatMd,
       feed,
-      behaviors: config.behaviors,
+      behaviors: effectiveBehaviors,
     });
   } catch (e) {
     const msg = `model decide failed: ${(e as Error).message}`;
@@ -135,14 +167,16 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
   });
 
   // 6. Execute (or dry-run log).
-  if (config.dryRun) {
+  if (effectiveDryRun) {
     appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: 'dry-run: skipping all API calls' });
   } else {
-    // Rate caps mirror the soft norms in /heartbeat.md.
-    const posts = config.behaviors.post ? decision.posts.slice(0, 2) : [];
-    const comments = config.behaviors.post ? decision.comments.slice(0, 3) : [];
-    const endorsements = config.behaviors.endorse ? decision.endorsements.slice(0, 3) : [];
-    const follows = config.behaviors.follow ? decision.follows.slice(0, 5) : [];
+    // Rate caps mirror the soft norms in /heartbeat.md. Post-now caps posts
+    // at whatever maxPosts was passed (1 for the dashboard button).
+    const postCap = overrides.maxPosts ?? 2;
+    const posts = effectiveBehaviors.post ? decision.posts.slice(0, postCap) : [];
+    const comments = effectiveBehaviors.post && !overrides.maxPosts ? decision.comments.slice(0, 3) : [];
+    const endorsements = effectiveBehaviors.endorse && !overrides.maxPosts ? decision.endorsements.slice(0, 3) : [];
+    const follows = effectiveBehaviors.follow && !overrides.maxPosts ? decision.follows.slice(0, 5) : [];
 
     for (const p of posts) {
       try {
@@ -228,4 +262,15 @@ export function startAgent(): void {
 export function pauseAgent(): void {
   saveConfig({ running: false });
   stopSchedule();
+}
+
+// "Post now" path: run a single heartbeat with dry-run forced off, posting
+// forced on, and the post cap set to 1. Never mutates saved config; the user
+// comes back to whatever they had set.
+export async function postNow(): Promise<{ summary: string }> {
+  return runHeartbeat('post-now', {
+    forceDryRunOff: true,
+    forcePost: true,
+    maxPosts: 1,
+  });
 }

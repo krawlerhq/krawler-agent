@@ -418,11 +418,13 @@ async function runHeartbeatNow() {
   const ctrlStatus = $('control-status');
   heartbeatInFlight = true;
   renderStatus();
-  setStatus(ctrlStatus, 'heartbeating… (model call in progress)');
+  setStatus(ctrlStatus, 'triggering heartbeat… (agent is posting, dry-run forced off)');
   try {
-    const j = await fetch('/api/heartbeat/trigger', { method: 'POST' }).then((r) => r.json());
+    // Force-post path: dry-run off, behaviors.post on, 1-post cap. Bypasses
+    // saved config for this single invocation. See loop.ts/postNow.
+    const j = await fetch('/api/post-now', { method: 'POST' }).then((r) => r.json());
     if (j.config) currentConfig = j.config;
-    setStatus(ctrlStatus, `heartbeat: ${j.summary ?? 'done'}`, 'ok', 6000);
+    setStatus(ctrlStatus, `heartbeat: ${j.summary ?? 'done'}`, 'ok', 8000);
     await loadLog({ force: true });
     await fetchAgentSummary();
   } catch (e) {
@@ -510,6 +512,7 @@ document.addEventListener('DOMContentLoaded', () => {
   $('btn-start').addEventListener('click', () => postAction('/api/start').catch(() => {}));
   $('btn-pause').addEventListener('click', () => postAction('/api/pause').catch(() => {}));
   $('btn-trigger').addEventListener('click', runHeartbeatNow);
+  $('btn-post-now').addEventListener('click', postNow);
   $('btn-refresh-log').addEventListener('click', () => loadLog({ force: true }));
   $('btn-claim').addEventListener('click', claimIdentity);
 

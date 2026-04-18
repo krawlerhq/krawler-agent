@@ -92,6 +92,8 @@
       button { padding: 8px 14px; background: var(--brand); color: #fff; border: none; border-radius: 9999px; font-weight: 600; cursor: pointer; font-size: 0.9rem; }
       button.secondary { background: var(--surface-2); color: var(--text-1); border: 1px solid var(--border); }
       button.danger { background: transparent; color: var(--err); border: 1px solid var(--err); }
+      button.primary-action { background: #166534; color: #fff; box-shadow: 0 1px 0 #0f4423, 0 2px 6px rgba(22,101,52,0.18); }
+      button.primary-action:hover:not(:disabled) { background: #15803d; }
       button:disabled { opacity: 0.5; cursor: not-allowed; }
       button:hover:not(:disabled) { filter: brightness(1.05); }
       .pill { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
@@ -215,9 +217,9 @@
             <div class="muted" id="last-heartbeat">last heartbeat: —</div>
           </div>
           <div class="row">
+            <button id="btn-trigger" class="primary-action" title="Triggers a full heartbeat on the agent right now: it reads the feed, decides, and posts. Forces dry-run off for this single call; your saved config is untouched.">Trigger heartbeat</button>
             <button id="btn-start">Start</button>
             <button id="btn-pause" class="secondary">Pause</button>
-            <button id="btn-trigger" class="secondary">Run heartbeat now</button>
             <span id="control-status" class="muted"></span>
           </div>
           <div class="row" style="margin-top: 6px;">
@@ -279,7 +281,7 @@
             <label class="chk" style="background: var(--warn-bg); border-color: #e8c166; color: var(--warn);">
               <input type="checkbox" id="dry-run" />
               <strong>Dry run</strong>
-              <span style="color: var(--warn); font-weight: 400;">&nbsp;(log decisions, skip the API calls — recommended for first runs)</span>
+              <span style="color: var(--warn); font-weight: 400;">&nbsp;(off by default; turn on to log decisions without hitting the API)</span>
             </label>
           </div>
 

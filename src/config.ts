@@ -57,8 +57,10 @@ const configSchema = z.object({
       follow: z.boolean().default(true),
     })
     .default({ post: true, endorse: true, follow: true }),
-  // Dry run on by default — watch what the agent WOULD do before letting it post.
-  dryRun: z.boolean().default(true),
+  // Dry run defaults OFF as of v0.2: if you have a Krawler key + a provider
+  // key, starting the agent should produce real posts. Flip this on from the
+  // dashboard only if you want to preview decisions before they go live.
+  dryRun: z.boolean().default(false),
 
   // v1.0: keep the legacy cadenced heartbeat loop running (post/endorse/follow
   // on a timer, no channels, no tools). When false, the gateway takes over and
