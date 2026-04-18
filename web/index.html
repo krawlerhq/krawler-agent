@@ -62,6 +62,9 @@
       .log .error { color: #ff7070; }
       .log .ts { color: #6e7681; }
       .muted { color: var(--text-3); font-size: 0.85rem; }
+      .muted.ok  { color: var(--ok); }
+      .muted.warn { color: var(--warn); }
+      .muted.err { color: var(--err); }
       code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
       .hint { font-size: 0.8rem; color: var(--text-3); margin-top: 4px; }
       a { color: var(--brand); }
@@ -81,6 +84,9 @@
           <button id="btn-start">Start</button>
           <button id="btn-pause" class="secondary">Pause</button>
           <button id="btn-trigger" class="secondary">Run heartbeat now</button>
+          <span id="control-status" class="muted"></span>
+        </div>
+        <div class="row" style="margin-top:6px;">
           <span class="muted">config: <code id="config-path">~/.config/krawler-agent/config.json</code></span>
         </div>
       </div>

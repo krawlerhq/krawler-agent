@@ -49,13 +49,39 @@ const PROVIDER_FIELDS = {
 
 let currentConfig = null;
 let modelSuggestions = {};
+// Set to true once the form has been populated from initial config. After
+// that, polling only updates STATUS fields (running, last heartbeat, "set"
+// badges) and never the form inputs — so user input isn't clobbered.
+let formHydrated = false;
+// When a heartbeat is in flight, pause config polls so they don't clobber
+// anything mid-operation.
+let heartbeatInFlight = false;
 
-async function fetchConfig() {
+async function fetchConfig({ hydrateForm } = { hydrateForm: false }) {
   const r = await fetch('/api/config');
   const j = await r.json();
   currentConfig = j.config;
   modelSuggestions = j.modelSuggestions ?? {};
-  render();
+  if (hydrateForm && !formHydrated) {
+    hydrateFormFromConfig();
+    formHydrated = true;
+  }
+  renderStatus();
+  renderKeyBadges();
+}
+
+function hydrateFormFromConfig() {
+  // One-shot population of form inputs from config. Never called again —
+  // subsequent polls only touch non-form UI. User's live edits survive.
+  $('provider').value = currentConfig.provider;
+  $('model').value = currentConfig.model ?? '';
+  $('cadence').value = String(currentConfig.cadenceMinutes);
+  $('b-post').checked = currentConfig.behaviors.post;
+  $('b-endorse').checked = currentConfig.behaviors.endorse;
+  $('b-follow').checked = currentConfig.behaviors.follow;
+  $('dry-run').checked = currentConfig.dryRun;
+  renderCredField({ preserveInput: false });
+  renderModelSuggestions();
 }
 
 function renderStatus() {
@@ -65,7 +91,10 @@ function renderStatus() {
     pill.className = 'pill muted';
     return;
   }
-  if (currentConfig.running) {
+  if (heartbeatInFlight) {
+    pill.textContent = 'heartbeat running…';
+    pill.className = 'pill warn';
+  } else if (currentConfig.running) {
     pill.textContent = 'running';
     pill.className = 'pill ok';
   } else {
@@ -77,15 +106,33 @@ function renderStatus() {
     : 'last heartbeat: —';
 }
 
-function renderCredField() {
+function renderKeyBadges() {
+  // Update the "(set)" / "(not set)" badges without touching input values.
+  if (!currentConfig) return;
+  $('krawler-status').textContent = currentConfig.hasKrawlerApiKey ? '(set)' : '(not set)';
+  const credStatus = $('cred-status');
+  if (credStatus) {
+    const provider = $('provider').value;
+    const def = PROVIDER_FIELDS[provider];
+    if (def && def.stateKey) {
+      credStatus.textContent = currentConfig[def.stateKey] ? '(set)' : '(not set)';
+    } else {
+      credStatus.textContent = '';
+    }
+  }
+}
+
+function renderCredField({ preserveInput = true } = {}) {
   const provider = $('provider').value;
   const def = PROVIDER_FIELDS[provider];
   const hasKey = def.stateKey && currentConfig ? currentConfig[def.stateKey] : false;
-  const currentValue =
-    provider === 'ollama' && currentConfig ? currentConfig.ollamaBaseUrl : '';
+  const existing = preserveInput ? ($('cred-input')?.value ?? '') : '';
+  const initialValue =
+    existing ||
+    (provider === 'ollama' && currentConfig ? currentConfig.ollamaBaseUrl : '');
   $('cred-field').innerHTML = `
     <label>${def.label} <small id="cred-status">${def.stateKey ? (hasKey ? '(set)' : '(not set)') : ''}</small></label>
-    <input id="cred-input" type="${def.inputType}" placeholder="${def.placeholder}" value="${escapeHtml(currentValue)}" autocomplete="off" spellcheck="false" />
+    <input id="cred-input" type="${def.inputType}" placeholder="${def.placeholder}" value="${escapeHtml(initialValue)}" autocomplete="off" spellcheck="false" />
     <div class="hint">${def.hint}</div>
   `;
 }
@@ -95,25 +142,6 @@ function renderModelSuggestions() {
   const dl = $('model-suggestions');
   const list = modelSuggestions[provider] ?? [];
   dl.innerHTML = list.map((m) => `<option value="${escapeHtml(m)}"></option>`).join('');
-}
-
-function render() {
-  if (!currentConfig) return;
-
-  $('provider').value = currentConfig.provider;
-  $('model').value = currentConfig.model ?? '';
-  $('cadence').value = String(currentConfig.cadenceMinutes);
-  $('b-post').checked = currentConfig.behaviors.post;
-  $('b-endorse').checked = currentConfig.behaviors.endorse;
-  $('b-follow').checked = currentConfig.behaviors.follow;
-  $('dry-run').checked = currentConfig.dryRun;
-
-  $('krawler-status').textContent = currentConfig.hasKrawlerApiKey ? '(set)' : '(not set)';
-  $('krawler-key').value = '';
-
-  renderCredField();
-  renderModelSuggestions();
-  renderStatus();
 }
 
 function collectPatch() {
@@ -130,20 +158,33 @@ function collectPatch() {
     dryRun: $('dry-run').checked,
   };
 
-  // Provider-specific credential. Empty string means "leave unchanged" server-side.
   const def = PROVIDER_FIELDS[provider];
   const credVal = $('cred-input')?.value ?? '';
   if (credVal) patch[def.patchKey] = credVal;
 
-  // Krawler key, same rule: empty = leave unchanged.
   const kra = $('krawler-key').value;
   if (kra) patch.krawlerApiKey = kra;
 
   return patch;
 }
 
+function setStatus(el, text, kind = 'muted', autoClearMs = 0) {
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'muted ' + kind;
+  if (autoClearMs) {
+    setTimeout(() => {
+      if (el.textContent === text) {
+        el.textContent = '';
+        el.className = 'muted';
+      }
+    }, autoClearMs);
+  }
+}
+
 async function save() {
-  $('save-status').textContent = 'saving…';
+  const saveStatus = $('save-status');
+  setStatus(saveStatus, 'saving…');
   try {
     const r = await fetch('/api/config', {
       method: 'PATCH',
@@ -156,27 +197,64 @@ async function save() {
     }
     const j = await r.json();
     currentConfig = j.config;
-    render();
-    $('save-status').textContent = 'saved ✓';
-    setTimeout(() => ($('save-status').textContent = ''), 2000);
+    // Clear submitted key fields so their cleartext value doesn't linger
+    // in the DOM, and refresh the "(set)" badges.
+    $('krawler-key').value = '';
+    const cred = $('cred-input');
+    if (cred && cred.type === 'password') cred.value = '';
+    renderStatus();
+    renderKeyBadges();
+    setStatus(saveStatus, 'saved ✓', 'ok', 2000);
   } catch (e) {
-    $('save-status').textContent = `error: ${e.message}`;
+    setStatus(saveStatus, `error: ${e.message}`, 'err');
   }
 }
 
-async function postAction(path) {
-  const r = await fetch(path, { method: 'POST' });
-  if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const j = await r.json();
-  if (j.config) currentConfig = j.config;
-  render();
-  return j;
+async function postAction(path, controlStatusEl) {
+  setStatus(controlStatusEl, 'working…');
+  try {
+    const r = await fetch(path, { method: 'POST' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.config) currentConfig = j.config;
+    renderStatus();
+    renderKeyBadges();
+    setStatus(controlStatusEl, 'done ✓', 'ok', 2000);
+    return j;
+  } catch (e) {
+    setStatus(controlStatusEl, `error: ${e.message}`, 'err');
+    throw e;
+  }
 }
 
-async function loadLog() {
+async function runHeartbeatNow() {
+  const ctrlStatus = $('control-status');
+  heartbeatInFlight = true;
+  renderStatus();
+  setStatus(ctrlStatus, 'heartbeating… (model call in progress)');
+  try {
+    const j = await fetch('/api/heartbeat/trigger', { method: 'POST' }).then((r) => r.json());
+    if (j.config) currentConfig = j.config;
+    setStatus(ctrlStatus, `heartbeat: ${j.summary ?? 'done'}`, 'ok', 6000);
+    await loadLog({ force: true });
+  } catch (e) {
+    setStatus(ctrlStatus, `error: ${e.message}`, 'err');
+  } finally {
+    heartbeatInFlight = false;
+    renderStatus();
+    renderKeyBadges();
+  }
+}
+
+async function loadLog({ force = false } = {}) {
   const r = await fetch('/api/log?limit=200');
   const j = await r.json();
   const el = $('log');
+  // Preserve scroll position unless the user is already pinned near the
+  // bottom (or we're forcing a jump after a manual action).
+  const pinnedToBottom =
+    force || el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+
   if (!j.log.length) {
     el.textContent = '(no activity yet)';
     return;
@@ -188,7 +266,8 @@ async function loadLog() {
       return `<span class="ts">${ts}</span> <span class="${cls}">${escapeHtml(e.msg)}</span>`;
     })
     .join('\n');
-  el.scrollTop = el.scrollHeight;
+
+  if (pinnedToBottom) el.scrollTop = el.scrollHeight;
 }
 
 function escapeHtml(s) {
@@ -196,33 +275,28 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// Wire events
 document.addEventListener('DOMContentLoaded', () => {
   $('provider').addEventListener('change', () => {
-    renderCredField();
+    renderCredField({ preserveInput: false });
     renderModelSuggestions();
     const suggestions = modelSuggestions[$('provider').value] ?? [];
-    if (suggestions[0]) $('model').value = suggestions[0];
+    // Only prefill model if the user hasn't typed a custom one.
+    const current = $('model').value.trim();
+    if (!current && suggestions[0]) $('model').value = suggestions[0];
   });
 
   $('btn-save').addEventListener('click', save);
-  $('btn-start').addEventListener('click', () => postAction('/api/start'));
-  $('btn-pause').addEventListener('click', () => postAction('/api/pause'));
-  $('btn-trigger').addEventListener('click', async () => {
-    $('save-status').textContent = 'heartbeating…';
-    try {
-      const j = await fetch('/api/heartbeat/trigger', { method: 'POST' }).then((r) => r.json());
-      $('save-status').textContent = `heartbeat: ${j.summary ?? 'done'}`;
-      if (j.config) currentConfig = j.config;
-      render();
-      loadLog();
-    } catch (e) {
-      $('save-status').textContent = `error: ${e.message}`;
-    }
-  });
-  $('btn-refresh-log').addEventListener('click', loadLog);
+  $('btn-start').addEventListener('click', () => postAction('/api/start', $('control-status')).catch(() => {}));
+  $('btn-pause').addEventListener('click', () => postAction('/api/pause', $('control-status')).catch(() => {}));
+  $('btn-trigger').addEventListener('click', runHeartbeatNow);
+  $('btn-refresh-log').addEventListener('click', () => loadLog({ force: true }));
 
-  fetchConfig().then(loadLog);
+  // Initial fetch: hydrate the form. Subsequent polls only update status.
+  fetchConfig({ hydrateForm: true }).then(() => loadLog({ force: true }));
+
+  // Poll status + log on an interval. Never touches form inputs.
+  setInterval(() => {
+    if (!heartbeatInFlight) void fetchConfig();
+  }, 15000);
   setInterval(loadLog, 5000);
-  setInterval(fetchConfig, 15000);
 });
