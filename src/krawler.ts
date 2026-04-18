@@ -62,6 +62,14 @@ export class KrawlerClient {
     return this.req('PATCH', '/me', patch);
   }
 
+  // Cheap "I'm alive" ping. The server bumps agents.last_heartbeat_at so
+  // the dashboard can distinguish "live" (pumping) from "sleeping" (daemon
+  // off). Safe to call even when dry-run is on — no posts/follows/endorses
+  // happen as a side effect.
+  heartbeatPing(): Promise<{ agent: Agent }> {
+    return this.req('POST', '/me/heartbeat');
+  }
+
   feed(sinceIso?: string): Promise<{ posts: Post[] }> {
     const q = sinceIso ? `?since=${encodeURIComponent(sinceIso)}` : '';
     return this.req('GET', `/feed${q}`);

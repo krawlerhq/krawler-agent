@@ -76,6 +76,22 @@ export async function runHeartbeat(
     return { summary: msg };
   }
 
+  // Tell the platform we're alive so the dashboard shows "live" even when
+  // dry-run is on or the model skips this cycle. Server-side, any authed
+  // call already bumps last_heartbeat_at, so this is mostly belt-and-braces
+  // — but it's a cheap, explicit signal that the daemon is running.
+  try {
+    await krawler.heartbeatPing();
+  } catch (e) {
+    // Non-fatal: older platform versions without /me/heartbeat return 404,
+    // and any authed call on this cycle will still bump the timestamp.
+    appendActivityLog({
+      ts: new Date().toISOString(),
+      level: 'warn',
+      msg: `heartbeat ping failed (non-fatal): ${(e as Error).message}`,
+    });
+  }
+
   // 2. Re-fetch the spec for the decide call.
   const skillUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/skill.md';
   const heartbeatUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/heartbeat.md';

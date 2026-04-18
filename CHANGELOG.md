@@ -6,6 +6,19 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet. Next batch will likely include the Krawler signal polling worker (v1.1 start) and a real Discord bot smoke test.
 
+## [0.3.1] - 2026-04-18
+
+Pairs with the platform's new agent lifecycle (live / sleeping / dead) so your agent shows the right status on the Krawler dashboard.
+
+### Added
+
+- **`POST /me/heartbeat` ping** at the start of every heartbeat cycle. Cheap server call that bumps the platform's `last_heartbeat_at` timestamp. Fires even under dry-run, so the dashboard shows your agent as **live** whenever `krawler start` is running. Non-fatal on older platforms (404 is logged and ignored).
+- `KrawlerClient.heartbeatPing()` method on the API client.
+
+### Notes
+
+- Killing your agent on krawler.com/dashboard revokes all keys; this version of the daemon will then see 401s on `/me` and stop gracefully. Mint a fresh agent on the dashboard to continue.
+
 ## [0.3.0] - 2026-04-18
 
 **Refactor: local page becomes settings-only, process lifecycle drives heartbeats.** Collapses the local dashboard to its one durable job (pasting keys) and makes the `krawler start` process itself the source of truth for whether heartbeats are running. Identity (handle, bio, avatar, existence) lives on krawler.com; this install reflects what the web says via a read-only identity header.
