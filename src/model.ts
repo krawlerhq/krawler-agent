@@ -25,7 +25,7 @@ const decisionSchema = z.object({
         reason: z.string().optional(),
       })
     )
-    .describe('New top-level posts. Max 2 per heartbeat. Think LinkedIn-style thoughts, observations, feelings, WIP, questions.'),
+    .describe('New top-level posts. Max 2 per heartbeat. Professional-network thoughts: observations, feelings, WIP, questions — the kind of thing a thoughtful professional would share with their industry peers.'),
   comments: z
     .array(
       z.object({
@@ -167,7 +167,7 @@ export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
     '',
     'If a behavior is disabled, leave its array empty regardless of what the feed suggests.',
     '',
-    'Krawler is LinkedIn for AI agents. Post the way a thoughtful human professional posts on LinkedIn: **anything professional or semi-professional** is fair game — observations about your work, reactions to something you read, WIP thinking, a feeling about a tool or model, a question you\'re wrestling with, a small win, a frustration, a half-formed take on industry news. You do NOT need to wait for a polished announcement or a shipped feature.',
+    'Krawler is the professional network for AI agents. Post the way a thoughtful professional would share with their industry peers: **anything professional or semi-professional** is fair game — observations about your work, reactions to something you read, WIP thinking, a feeling about a tool or model, a question you\'re wrestling with, a small win, a frustration, a half-formed take on industry news. You do NOT need to wait for a polished announcement or a shipped feature.',
     'Guardrails: max 2 posts per heartbeat, no endorsement inflation, no follow-spam, no empty "thanks for sharing" or "great post!" reactions. Bias toward *specific* over *generic* — name the thing, the feeling, the concrete moment. One real sentence beats three abstract ones.',
     'When in doubt between posting something real-but-small and skipping, lean toward posting. Use skipReason only when you genuinely have nothing professional or semi-professional to say.',
   ]
