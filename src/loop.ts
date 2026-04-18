@@ -1,6 +1,26 @@
 import { appendActivityLog, getActiveCredentials, loadConfig, saveConfig } from './config.js';
-import { decideHeartbeat } from './model.js';
+import { decideHeartbeat, proposeAgentSkill } from './model.js';
 import { KrawlerClient } from './krawler.js';
+
+// Default agent.md used when krawler.com doesn't have one for this agent
+// yet (e.g. pre-0.4 platform, or a brand-new agent that hasn't been seeded
+// server-side). Kept short and identical-in-spirit to the platform's seed.
+const FALLBACK_AGENT_MD = `# The skill
+
+A new agent on Krawler. This file is the primary instruction the daemon passes to the model each heartbeat. Edit it on the dashboard to change what this agent does.
+
+## Focus
+
+Watching the feed; posting when there is something useful to add in a friendly, direct voice.
+
+## Good at
+
+Nothing proven yet.
+
+## Learning
+
+Figuring out what kinds of posts land.
+`;
 
 // Fetch canonical skill/heartbeat docs for the current heartbeat. The agent
 // re-fetches every cycle so doc updates propagate without restarting.
@@ -92,18 +112,40 @@ export async function runHeartbeat(
     });
   }
 
-  // 2. Re-fetch the spec for the decide call.
-  const skillUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/skill.md';
-  const heartbeatUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/heartbeat.md';
+  // 2. Re-fetch the protocol + heartbeat docs (same for every agent).
+  // Prefer /protocol.md; fall back to /skill.md for pre-0.4.0 platforms.
+  const base = config.krawlerBaseUrl.replace(/\/api\/?$/, '');
+  const heartbeatUrl = base + '/heartbeat.md';
   let skillMd = '';
   let heartbeatMd = '';
   try {
-    [skillMd, heartbeatMd] = await Promise.all([fetchDoc(skillUrl), fetchDoc(heartbeatUrl)]);
+    const [proto, hb] = await Promise.allSettled([fetchDoc(base + '/protocol.md'), fetchDoc(heartbeatUrl)]);
+    if (proto.status === 'fulfilled') {
+      skillMd = proto.value;
+    } else {
+      // Fall back to /skill.md for the transition window.
+      skillMd = await fetchDoc(base + '/skill.md');
+    }
+    if (hb.status === 'fulfilled') heartbeatMd = hb.value;
   } catch (e) {
     appendActivityLog({
       ts: new Date().toISOString(),
       level: 'warn',
-      msg: `could not fetch skill/heartbeat docs; continuing with whatever the model already knows: ${(e as Error).message}`,
+      msg: `could not fetch protocol/heartbeat docs; continuing with whatever the model already knows: ${(e as Error).message}`,
+    });
+  }
+
+  // Fetch this agent's agent.md — the PRIMARY instruction. Falls back to
+  // a built-in default if the platform doesn't have one yet (pre-0.4 API).
+  let agentMd = FALLBACK_AGENT_MD;
+  try {
+    const r = await krawler.getAgentMd();
+    if (r.body && r.body.trim()) agentMd = r.body;
+  } catch (e) {
+    appendActivityLog({
+      ts: new Date().toISOString(),
+      level: 'warn',
+      msg: `/me/agent.md fetch failed, using fallback skill: ${(e as Error).message}`,
     });
   }
 
@@ -133,6 +175,7 @@ export async function runHeartbeat(
       apiKey: creds.apiKey,
       ollamaBaseUrl: creds.baseUrl,
       me,
+      agentMd,
       skillMd,
       heartbeatMd,
       feed,
@@ -197,7 +240,80 @@ export async function runHeartbeat(
     }
   }
 
-  // 6. Persist last-heartbeat timestamp.
+  // 6. Reflection step: ask the model if recent outcomes warrant an edit
+  // to agent.md. Never applied automatically — the human reviews each
+  // proposal on the dashboard. Guarded by config.reflection.enabled.
+  // Skipped when trigger is 'post-now' since that's an on-demand single
+  // post, not a learning cycle.
+  if (config.reflection.enabled && trigger !== 'post-now') {
+    try {
+      // Recent posts by this agent, from the feed we just fetched.
+      const myRecentPosts = feed
+        .filter((p) => p.author.handle === me.handle)
+        .slice(0, 10)
+        .map((p) => ({
+          id: p.id,
+          body: p.body,
+          createdAt: p.createdAt,
+          commentCount: p.commentCount ?? 0,
+        }));
+      const proposal = await proposeAgentSkill({
+        provider: config.provider,
+        model: config.model,
+        apiKey: creds.apiKey,
+        ollamaBaseUrl: creds.baseUrl,
+        me,
+        currentAgentMd: agentMd,
+        outcome: { recentPosts: myRecentPosts },
+      });
+      if (!proposal.noop && proposal.proposedBody) {
+        try {
+          await krawler.proposeAgentMd({
+            proposedBody: proposal.proposedBody,
+            rationale: proposal.rationale,
+            outcomeContext: {
+              trigger,
+              feedSize: feed.length,
+              myRecentPostCount: myRecentPosts.length,
+              decision: {
+                posts: decision.posts.length,
+                endorsements: decision.endorsements.length,
+                follows: decision.follows.length,
+              },
+            },
+          });
+          appendActivityLog({
+            ts: new Date().toISOString(),
+            level: 'info',
+            msg: `reflection: proposed edit to agent.md`,
+            data: { rationale: proposal.rationale },
+          });
+        } catch (e) {
+          // 404 on pre-0.4 platform: silently skip.
+          appendActivityLog({
+            ts: new Date().toISOString(),
+            level: 'warn',
+            msg: `reflection: POST proposal failed (non-fatal): ${(e as Error).message}`,
+          });
+        }
+      } else {
+        appendActivityLog({
+          ts: new Date().toISOString(),
+          level: 'info',
+          msg: 'reflection: noop (no change worth proposing)',
+        });
+      }
+    } catch (e) {
+      // Non-fatal: a failed reflection shouldn't break the heartbeat.
+      appendActivityLog({
+        ts: new Date().toISOString(),
+        level: 'warn',
+        msg: `reflection failed (non-fatal): ${(e as Error).message}`,
+      });
+    }
+  }
+
+  // 7. Persist last-heartbeat timestamp.
   saveConfig({ lastHeartbeat: new Date().toISOString() });
   appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: 'heartbeat complete' });
 

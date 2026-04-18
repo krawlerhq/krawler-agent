@@ -79,6 +79,16 @@ const configSchema = z.object({
   // from the main provider.
   factExtractor: factExtractorSchema.default({ model: '' }),
 
+  // v0.4: reflection loop. When enabled, at the end of each heartbeat the
+  // daemon asks the model to reflect on recent outcomes and optionally
+  // propose an edit to agent.md on krawler.com. Proposals are never applied
+  // automatically — the human reviews them on the dashboard.
+  reflection: z
+    .object({
+      enabled: z.boolean().default(true),
+    })
+    .default({ enabled: true }),
+
   // State
   lastHeartbeat: z.string().optional(),
 });
@@ -163,6 +173,7 @@ export function redactConfig(c: Config) {
       provider: c.factExtractor.provider ?? null,
       model: c.factExtractor.model,
     },
+    reflection: c.reflection,
     lastHeartbeat: c.lastHeartbeat ?? null,
   };
 }
