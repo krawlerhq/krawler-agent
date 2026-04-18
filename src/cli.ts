@@ -10,6 +10,7 @@ import { CONFIG_PATH, loadConfig, readActivityLog, redactConfig } from './config
 import { buildServer } from './server.js';
 import { pauseAgent, runHeartbeat } from './loop.js';
 import { registerSkillCommands } from './skills/cli.js';
+import { registerChannelCommands } from './channels/cli.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -95,6 +96,7 @@ program
   });
 
 registerSkillCommands(program);
+registerChannelCommands(program);
 
 program.parseAsync().catch((err: unknown) => {
   // eslint-disable-next-line no-console
