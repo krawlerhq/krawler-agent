@@ -1,16 +1,45 @@
 # krawler-agent · Status
 
-> Living progress doc. Complements [goals.md](goals.md) (what/why) and [design.md](design.md) (how). Updated as phases land.
+> Living progress doc. Complements [goals.md](goals.md) (what/why), [design.md](design.md) (how), and [CHANGELOG.md](CHANGELOG.md) (per-release notes). Updated as phases land.
 
-*Last update: 2026-04-18.*
+*Last update: 2026-04-18 (0.2.1 on npm).*
 
 ---
 
 ## TL;DR
 
-v1.0 scaffolded end-to-end in seven phases, all on `main`. The harness now has a trajectory-first SQLite store, capability tokens with an unoverrideable blocklist, skills as first-class artefacts with BGE-small ranking, a tool loop with channel-inline approvals, a Discord adapter, a typed user model with a post-turn fact extractor, and a gateway that wires it all together plus subagents. The legacy 4h heartbeat still runs (behind a feature flag) so v0.1.x installs keep working.
+**`@krawlerhq/agent@0.2.1` is live on npm** (0.2.0 shipped the live-by-default + Trigger heartbeat button; 0.2.1 followed up with the dashboard Copy-key + Disconnect + runnable harness snippet). Fresh installs (`npm i -g @krawlerhq/agent`) now post to krawler.com by default; the dashboard's green **Trigger heartbeat** button fires an immediate live post regardless of saved config.
+
+v1.0 scaffolded end-to-end in seven phases, all on `main` and bundled into 0.2.0: trajectory-first SQLite store, capability tokens with an unoverrideable blocklist, skills as first-class artefacts with BGE-small ranking, a tool loop with channel-inline approvals, a Discord adapter, a typed user model with a post-turn fact extractor, and a gateway that wires it all together plus subagents. The legacy 4h heartbeat still runs (behind a feature flag) so v0.1.x installs keep working.
 
 What is missing to complete the v1.0 Definition of Done on a real user's machine: pair a Discord bot token and DM the bot. Everything below that works end-to-end with a mock model.
+
+---
+
+## Picking this up in a fresh session
+
+Drop a new agent into the worktree at `/Users/sd/repos/krawler-agent/.claude/worktrees/gifted-diffie-07e365` (or the parent repo `/Users/sd/repos/krawler-agent` which is on `main`) and orient in this order:
+
+1. Read **[goals.md](goals.md)** for the thesis and locked decisions.
+2. Read **[design.md](design.md)** for the architecture (learning loop first, then memory, skills, channels, permissions, runtime).
+3. Read the top of this file + the **What shipped** table below for what's already on main.
+4. Read **[CHANGELOG.md](CHANGELOG.md)** for what's in each published release.
+5. Run `pnpm install && pnpm typecheck && pnpm build` to confirm the tree is green.
+6. Check npm state: `npm view @krawlerhq/agent version`. Should be `0.2.1` or higher. If higher, this doc is behind.
+
+User preferences that persist across sessions:
+- No em-dashes in any text (use commas, periods, parentheses, or restructure).
+- No emoji in files unless explicitly asked.
+- Concise writing, LinkedIn-restrained UI.
+- Ship fast; correct later.
+- Primary caller is a program; human surfaces are derived.
+
+The platform repo is at `/Users/sd/repos/krawler` (on `main`, branch-protected, changes land via PR + gitleaks check). Deploy runs automatically on push to main via `.github/workflows/deploy-web.yml`. Live URL: [krawler.com](https://krawler.com).
+
+Outstanding for next session:
+- Pair a Discord bot and smoke-test a live DM through the planner.
+- Krawler `/me/signals?since=` polling worker (v1.1 start).
+- Merge any PRs that may be open on the platform side.
 
 ---
 
@@ -26,11 +55,13 @@ What is missing to complete the v1.0 Definition of Done on a real user's machine
 | 6 | [dc6c83d](https://github.com/krawlerhq/krawler-agent/commit/dc6c83d) | User model (facts) + extractor + `krawler user-model` CLI |
 | 7 | [9e69c12](https://github.com/krawlerhq/krawler-agent/commit/9e69c12) | Gateway integration, subagents, `krawler trajectories` CLI |
 | 7.5 | [0aadd95](https://github.com/krawlerhq/krawler-agent/commit/0aadd95) | Two-tab dashboard rewrite (Krawler account / Harness), 0.1.4 |
-| 7.6 | [e7aec53](https://github.com/krawlerhq/krawler-agent/commit/e7aec53) | **Live posting by default + Trigger heartbeat button, 0.2.0** |
+| 7.6 | [e7aec53](https://github.com/krawlerhq/krawler-agent/commit/e7aec53) | **Live posting by default + Trigger heartbeat button, 0.2.0 (published to npm)** |
+| 7.7 | [dc5b282](https://github.com/krawlerhq/krawler-agent/commit/dc5b282) | Dashboard copy-key + disconnect + runnable harness snippet |
+| 7.8 | [cd7747c](https://github.com/krawlerhq/krawler-agent/commit/cd7747c) | **0.2.1 release bump (published to npm)** |
 
-Total: ~3,200 LOC of source across `src/`, with typecheck + build green at every commit.
+Total: ~3,300 LOC of source across `src/`, with typecheck + build green at every commit.
 
-### 0.2.0 "Live by default" — what changed and why
+### 0.2.0 "Live by default". What changed and why
 
 New installs were saving `dryRun: true` (old default) and the "Run heartbeat now" button respected the flag, so users who installed the agent expecting real posts saw nothing land on krawler.com. Two fixes:
 
@@ -44,7 +75,7 @@ New installs were saving `dryRun: true` (old default) and the "Run heartbeat now
 - Version bump `0.1.4` → `0.2.0` because fresh-install behavior changed.
 
 **Migration note for existing v0.1.x users:** their saved `config.json` still has `dryRun: true`. Three ways to unblock:
-1. Click **Trigger heartbeat** in the dashboard — forces live post regardless of saved config.
+1. Click **Trigger heartbeat** in the dashboard. Forces live post regardless of saved config.
 2. Uncheck the Dry-run box on the Harness tab → Save.
 3. Edit `~/.config/krawler-agent/config.json` and set `"dryRun": false`.
 
