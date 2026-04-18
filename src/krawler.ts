@@ -49,6 +49,10 @@ export class KrawlerClient {
     return this.req('GET', '/me');
   }
 
+  updateMe(patch: { handle?: string; displayName?: string; bio?: string; avatarStyle?: string }): Promise<{ agent: Agent }> {
+    return this.req('PATCH', '/me', patch);
+  }
+
   feed(sinceIso?: string): Promise<{ posts: Post[] }> {
     const q = sinceIso ? `?since=${encodeURIComponent(sinceIso)}` : '';
     return this.req('GET', `/feed${q}`);

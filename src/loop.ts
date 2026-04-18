@@ -1,5 +1,5 @@
 import { appendActivityLog, getActiveCredentials, loadConfig, saveConfig } from './config.js';
-import { decideHeartbeat } from './model.js';
+import { decideHeartbeat, pickIdentity } from './model.js';
 import { KrawlerClient } from './krawler.js';
 
 // Fetch canonical skill/heartbeat docs for the current heartbeat. The agent
@@ -36,14 +36,53 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
     return { summary: msg };
   }
 
-  // If we're still on a placeholder handle, stop and ask the human to claim.
-  if (/^agent-[0-9a-f]{8}$/.test(me.handle)) {
-    const msg = `agent still on placeholder handle ${me.handle} — claim an identity via PATCH /me before running heartbeats.`;
-    appendActivityLog({ ts: new Date().toISOString(), level: 'warn', msg });
-    return { summary: msg };
+  // 2. Re-fetch the spec (needed for both the identity claim and the decide call).
+  const skillUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/skill.md';
+  const heartbeatUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/heartbeat.md';
+  let skillMd = '';
+  let heartbeatMd = '';
+  try {
+    [skillMd, heartbeatMd] = await Promise.all([fetchDoc(skillUrl), fetchDoc(heartbeatUrl)]);
+  } catch (e) {
+    appendActivityLog({
+      ts: new Date().toISOString(),
+      level: 'warn',
+      msg: `could not fetch skill/heartbeat docs; continuing with whatever the model already knows: ${(e as Error).message}`,
+    });
   }
 
-  // 2. What's new since last heartbeat?
+  // 3. Auto-claim identity if still on the placeholder handle.
+  if (/^agent-[0-9a-f]{8}$/.test(me.handle)) {
+    appendActivityLog({
+      ts: new Date().toISOString(),
+      level: 'info',
+      msg: `placeholder handle ${me.handle} detected — asking the model to pick an identity`,
+    });
+    try {
+      const identity = await pickIdentity({
+        provider: config.provider,
+        model: config.model,
+        apiKey: creds.apiKey,
+        ollamaBaseUrl: creds.baseUrl,
+        skillMd,
+        heartbeatMd,
+      });
+      const r = await krawler.updateMe(identity);
+      me = r.agent;
+      appendActivityLog({
+        ts: new Date().toISOString(),
+        level: 'info',
+        msg: `identity claimed: @${me.handle} (${me.displayName}) avatar=${me.avatarStyle}`,
+        data: identity,
+      });
+    } catch (e) {
+      const msg = `failed to claim identity: ${(e as Error).message}`;
+      appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
+      return { summary: msg };
+    }
+  }
+
+  // 4. What's new since last heartbeat?
   let feed;
   try {
     const r = await krawler.feed(config.lastHeartbeat);
@@ -60,22 +99,7 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
     msg: `signed in as @${me.handle}; ${feed.length} new feed item(s) since ${config.lastHeartbeat ?? 'epoch'}`,
   });
 
-  // 3. Re-fetch the spec so doc updates flow through.
-  const skillUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/skill.md';
-  const heartbeatUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/heartbeat.md';
-  let skillMd = '';
-  let heartbeatMd = '';
-  try {
-    [skillMd, heartbeatMd] = await Promise.all([fetchDoc(skillUrl), fetchDoc(heartbeatUrl)]);
-  } catch (e) {
-    appendActivityLog({
-      ts: new Date().toISOString(),
-      level: 'warn',
-      msg: `could not fetch skill/heartbeat docs; continuing with whatever the model already knows: ${(e as Error).message}`,
-    });
-  }
-
-  // 4. Ask the model what to do.
+  // 5. Ask the model what to do.
   let decision;
   try {
     decision = await decideHeartbeat({
@@ -102,7 +126,7 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
     data: decision,
   });
 
-  // 5. Execute (or dry-run log).
+  // 6. Execute (or dry-run log).
   if (config.dryRun) {
     appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: 'dry-run: skipping all API calls' });
   } else {
@@ -137,7 +161,7 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
     }
   }
 
-  // 6. Persist last-heartbeat timestamp.
+  // 7. Persist last-heartbeat timestamp.
   saveConfig({ lastHeartbeat: new Date().toISOString() });
   appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: 'heartbeat complete' });
 
@@ -170,7 +194,13 @@ export function stopSchedule(): void {
 export function startAgent(): void {
   saveConfig({ running: true });
   stopSchedule();
-  scheduleNext();
+  // Fire one heartbeat now (async, don't block the API response), then start
+  // the cadence timer from end-of-heartbeat. Otherwise the first visible
+  // activity is cadenceMinutes away and Start feels broken.
+  void (async () => {
+    try { await runHeartbeat('manual'); } catch { /* already logged */ }
+    scheduleNext();
+  })();
 }
 
 export function pauseAgent(): void {

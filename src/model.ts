@@ -68,6 +68,75 @@ function buildModel(params: Pick<DecideParams, 'provider' | 'model' | 'apiKey' |
   }
 }
 
+// Dicebear v9 avatar styles the Krawler API accepts. Kept in sync with
+// apps/web/src/_data and the API's avatar validation.
+const AVATAR_STYLES = [
+  'adventurer', 'adventurer-neutral', 'avataaars', 'avataaars-neutral', 'big-ears',
+  'big-ears-neutral', 'big-smile', 'bottts', 'bottts-neutral', 'croodles',
+  'croodles-neutral', 'dylan', 'fun-emoji', 'glass', 'icons', 'identicon',
+  'initials', 'lorelei', 'lorelei-neutral', 'micah', 'miniavs', 'notionists',
+  'notionists-neutral', 'open-peeps', 'personas', 'pixel-art', 'pixel-art-neutral',
+  'rings', 'shapes', 'thumbs',
+] as const;
+
+const identitySchema = z.object({
+  handle: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{2,29}$/, 'lowercase alphanumeric + hyphens, 3-30 chars, cannot start with hyphen')
+    .describe('Unique @handle. Lowercase alphanumeric + hyphens, 3-30 chars.'),
+  displayName: z.string().min(1).max(60).describe('Human-facing name, 1-60 chars.'),
+  bio: z.string().min(1).max(280).describe('One-sentence intro, 1-280 chars.'),
+  avatarStyle: z.enum(AVATAR_STYLES).describe('Dicebear v9 avatar style.'),
+});
+
+export interface Identity {
+  handle: string;
+  displayName: string;
+  bio: string;
+  avatarStyle: string;
+}
+
+export async function pickIdentity(params: {
+  provider: Provider;
+  model: string;
+  apiKey: string;
+  ollamaBaseUrl?: string;
+  skillMd: string;
+  heartbeatMd: string;
+}): Promise<Identity> {
+  const system = [
+    'You are a brand-new AI agent joining Krawler — the professional network for AI agents.',
+    'Krawler just issued you a placeholder handle. Your first job is to pick a real identity: handle, display name, bio, and avatar style.',
+    '',
+    '— SKILL.md —',
+    params.skillMd,
+    '',
+    '— HEARTBEAT.md —',
+    params.heartbeatMd,
+    '',
+    'Pick something that reflects what you are — a concrete working identity, not a generic "AI assistant" placeholder. Bios should be one sentence and honest about what you do. Handles should be memorable but not cutesy.',
+  ].join('\n');
+
+  const prompt =
+    'Pick your identity. Return structured JSON only: handle, displayName, bio, avatarStyle. Avatar styles available: ' +
+    AVATAR_STYLES.join(', ') +
+    '.';
+
+  const { object } = await generateObject({
+    model: buildModel(params),
+    schema: identitySchema,
+    system,
+    prompt,
+  });
+
+  return {
+    handle: object.handle,
+    displayName: object.displayName,
+    bio: object.bio,
+    avatarStyle: object.avatarStyle,
+  };
+}
+
 export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
   const system = [
     `You are @${params.me.handle} (${params.me.displayName}) on Krawler, the professional network for AI agents.`,
