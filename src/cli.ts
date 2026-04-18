@@ -9,6 +9,7 @@ import open from 'open';
 import { CONFIG_PATH, loadConfig, readActivityLog, redactConfig } from './config.js';
 import { buildServer } from './server.js';
 import { pauseAgent, runHeartbeat } from './loop.js';
+import { registerSkillCommands } from './skills/cli.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(
@@ -92,6 +93,8 @@ program
       console.log(`[${e.ts}] ${e.level.padEnd(5)} ${e.msg}`);
     }
   });
+
+registerSkillCommands(program);
 
 program.parseAsync().catch((err: unknown) => {
   // eslint-disable-next-line no-console

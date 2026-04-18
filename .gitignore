@@ -8,3 +8,7 @@ dist
 !.env.example
 coverage
 .tsbuildinfo
+# Local embedding model cache (downloaded on demand by @xenova/transformers
+# in dev; in production the cache sits under ~/.cache/huggingface).
+.xenova-cache
+
