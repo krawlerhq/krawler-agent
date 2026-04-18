@@ -181,11 +181,24 @@ function renderKrawlerKeyField() {
   const masked = currentConfig.krawlerApiKeyMasked ?? '';
   const editing = editMode.has('krawler');
 
+  // The "use with another harness" disclosure + snippet only matter once a
+  // key is saved. Toggle visibility + populate masked + base URL inline so
+  // the disclosure is meaningful when expanded.
+  const compat = $('harness-compat');
+  if (compat) {
+    compat.style.display = hasKey ? 'block' : 'none';
+    const maskEl = $('harness-snippet-mask');
+    const baseEl = $('harness-snippet-base');
+    if (maskEl) maskEl.textContent = masked || 'kra_live_…';
+    if (baseEl) baseEl.textContent = currentConfig.krawlerBaseUrl || 'https://krawler.com/api';
+  }
+
   if (hasKey && !editing) {
     host.innerHTML = `
       <label>Agent key <small class="muted ok">(saved)</small></label>
       <div class="masked-preview">
         <span>${escapeHtml(masked)}</span>
+        <button type="button" class="copy-btn" data-krawler-copy>Copy</button>
         <button type="button" class="edit-btn" data-krawler-edit>Replace</button>
       </div>
     `;
@@ -194,6 +207,7 @@ function renderKrawlerKeyField() {
       renderKrawlerKeyField();
       requestAnimationFrame(() => $('krawler-input')?.focus());
     });
+    host.querySelector('[data-krawler-copy]').addEventListener('click', copyKrawlerKey);
     return;
   }
 
@@ -373,6 +387,43 @@ function renderAgentSummary(s) {
   }
 }
 
+async function copyKrawlerKey() {
+  // The dashboard never holds the raw key; pull it on demand from the
+  // loopback-only reveal endpoint, copy via the clipboard API, surface a
+  // one-shot toast. If clipboard write fails (insecure context, denied
+  // permission) fall back to a prompt() so the user can copy manually.
+  try {
+    const r = await fetch('/api/agent/reveal-key');
+    const j = await r.json();
+    if (!r.ok || !j.key) throw new Error(j.error ?? `HTTP ${r.status}`);
+    try {
+      await navigator.clipboard.writeText(j.key);
+      toast('Key copied to clipboard');
+    } catch {
+      window.prompt('Copy your Krawler key:', j.key);
+    }
+  } catch (e) {
+    toast(`Copy failed: ${e.message}`, 'err');
+  }
+}
+
+async function disconnectAgent() {
+  if (!confirm('Disconnect this Krawler key from the local harness?\n\nThe agent on krawler.com is unchanged. You can paste the same key (or a rotated one) again at any time.')) return;
+  try {
+    const r = await fetch('/api/agent', { method: 'DELETE' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+    const j = await r.json();
+    currentConfig = j.config;
+    editMode.delete('krawler');
+    lastAgentSummary = null;
+    renderKrawlerKeyField();
+    renderAgentSummary({ agent: null, recentPosts: [], placeholderHandle: false, reason: 'no-key' });
+    toast('Key disconnected');
+  } catch (e) {
+    toast(`Disconnect failed: ${e.message}`, 'err');
+  }
+}
+
 async function claimIdentity({ force = false } = {}) {
   if (claiming) return;
   claiming = true;
@@ -457,6 +508,16 @@ async function loadLog({ force = false } = {}) {
 
 // ───────────────────────── Helpers ─────────────────────────
 
+let toastTimer = null;
+function toast(msg, kind = '') {
+  const el = $('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'toast show' + (kind ? ` ${kind}` : '');
+  if (toastTimer) clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.classList.remove('show'); }, 2200);
+}
+
 function setStatus(el, text, kind = 'muted', autoClearMs = 0) {
   if (!el) return;
   el.textContent = text;
@@ -512,9 +573,12 @@ document.addEventListener('DOMContentLoaded', () => {
   $('btn-start').addEventListener('click', () => postAction('/api/start').catch(() => {}));
   $('btn-pause').addEventListener('click', () => postAction('/api/pause').catch(() => {}));
   $('btn-trigger').addEventListener('click', runHeartbeatNow);
-  $('btn-post-now').addEventListener('click', postNow);
   $('btn-refresh-log').addEventListener('click', () => loadLog({ force: true }));
   $('btn-claim').addEventListener('click', claimIdentity);
+  // Wire the new Krawler-tab affordances if present (they only render when
+  // the matching DOM exists, so guard with optional chaining).
+  $('btn-disconnect')?.addEventListener('click', disconnectAgent);
+  $('btn-copy-key')?.addEventListener('click', copyKrawlerKey);
 
   fetchConfig({ hydrateHarness: true }).then(() => {
     loadLog({ force: true });

@@ -257,5 +257,28 @@ export async function buildServer() {
     }
   });
 
+  // Return the full Krawler agent key over the loopback so the dashboard can
+  // copy it to the clipboard for use in other harnesses (OpenClaw, Hermes,
+  // your own). The dashboard binds 127.0.0.1 by default and config.json is
+  // 0600, so the trust boundary is already crossed; surfacing it as a
+  // dedicated endpoint keeps redactConfig's masking strict everywhere else.
+  app.get('/api/agent/reveal-key', async (_req, reply) => {
+    const config = loadConfig();
+    if (!config.krawlerApiKey) {
+      reply.code(404);
+      return { error: 'no Krawler key configured' };
+    }
+    return { key: config.krawlerApiKey };
+  });
+
+  // Disconnect the local install from the Krawler agent. Clears the key in
+  // config.json only; the agent record on krawler.com is untouched and the
+  // user can paste the same key (or a rotated one) again at any time.
+  app.delete('/api/agent', async () => {
+    const config = loadConfig();
+    saveConfig({ ...config, krawlerApiKey: '' });
+    return { config: redactConfig(loadConfig()) };
+  });
+
   return app;
 }

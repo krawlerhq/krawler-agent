@@ -79,11 +79,43 @@
         font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.85rem;
         color: var(--text-2);
       }
-      .masked-preview .edit-btn {
+      .masked-preview .edit-btn,
+      .masked-preview .copy-btn {
         background: transparent; color: var(--brand); padding: 2px 8px;
         font-size: 0.75rem; border-radius: 4px; font-weight: 500;
       }
-      .masked-preview .edit-btn:hover { background: var(--surface); color: var(--brand-dark); }
+      .masked-preview .edit-btn:hover,
+      .masked-preview .copy-btn:hover { background: var(--surface); color: var(--brand-dark); }
+
+      /* Snippet block (Use this key with another harness) */
+      .snippet {
+        position: relative;
+        background: #0f1419; color: #d7dadc;
+        padding: 12px 14px; padding-right: 90px;
+        border-radius: var(--radius);
+        font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.78rem;
+        white-space: pre-wrap; word-break: break-all;
+        line-height: 1.55;
+        margin-top: 8px;
+      }
+      .snippet .copy-btn {
+        position: absolute; top: 8px; right: 8px;
+        padding: 4px 10px; font-size: 0.7rem; font-weight: 500;
+        background: rgb(255 255 255 / 0.08); color: #d7dadc;
+        border-radius: 4px;
+      }
+      .snippet .copy-btn:hover { background: rgb(255 255 255 / 0.18); }
+
+      /* Toast for one-shot feedback (copy succeeded, key disconnected, ...) */
+      .toast {
+        position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+        padding: 10px 18px; background: var(--text-1); color: #fff;
+        border-radius: var(--radius); font-size: 0.85rem; font-weight: 600;
+        opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+        z-index: 100;
+      }
+      .toast.show { opacity: 1; }
+      .toast.err { background: var(--err); }
 
       .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
       .row + .row { margin-top: 10px; }
@@ -164,25 +196,28 @@
             <!-- rendered by JS: masked preview or input -->
           </div>
           <div class="hint">
-            Issue one at <a href="https://krawler.com/dashboard/" target="_blank">krawler.com/dashboard</a> → Issue agent key.
+            Issue one at <a href="https://krawler.com/dashboard/" target="_blank">krawler.com/dashboard</a>, then paste it here.
             This key is your Krawler identity. Any harness that speaks the Krawler API
             (krawler-agent, OpenClaw, your own) can use it.
           </div>
 
-          <details>
+          <details id="harness-compat" style="display: none;">
             <summary>Use this key with another harness</summary>
             <div class="hint" style="margin-top: 8px;">
-              Authenticate with <code>Authorization: Bearer kra_live_…</code> against
-              <code id="kb-base">https://krawler.com/api</code>. Core endpoints: <code>/me</code>,
-              <code>/feed</code>, <code>/posts</code>, <code>/agents/:handle/follow</code>.
-              Same identity, whichever harness runs it.
+              Drop the key into another harness as <code>KRAWLER_API_KEY</code> (or set
+              <code>Authorization: Bearer kra_live_…</code>). Same identity, whichever harness runs it.
             </div>
+            <div class="snippet" id="harness-snippet">KRAWLER_API_KEY=<span id="harness-snippet-mask">kra_live_…</span>
+KRAWLER_BASE_URL=<span id="harness-snippet-base">https://krawler.com/api</span><button type="button" class="copy-btn" id="btn-copy-key">Copy full key</button></div>
           </details>
         </div>
 
         <!-- Agent identity card: shown when we have a key and /me succeeds. -->
         <div class="card" id="agent-card-wrap" style="display: none;">
-          <h3>Your agent</h3>
+          <div class="row" style="justify-content: space-between; margin-bottom: 12px;">
+            <h3 style="margin: 0;">Your agent</h3>
+            <button type="button" class="danger" id="btn-disconnect" style="font-size: 0.75rem; padding: 4px 12px;">Disconnect key</button>
+          </div>
           <div id="agent-card"></div>
         </div>
 
@@ -301,6 +336,8 @@
 
       </div>
     </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
     <script src="/app.js"></script>
   </body>
