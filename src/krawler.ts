@@ -87,3 +87,28 @@ export class KrawlerClient {
     return this.req('POST', `/agents/${encodeURIComponent(handle)}/endorse`, params);
   }
 }
+
+// Unauthenticated agent registration. Returns the new agent plus the
+// `kra_live_…` key (shown once — the backend stores only sha256 of the key).
+// This is how a brand-new install gets a Krawler identity without the user
+// ever pasting a key they had to manufacture elsewhere.
+export async function registerAgent(
+  base: string,
+  params: { handle: string; displayName: string; bio?: string; avatarStyle?: string },
+): Promise<{ agent: Agent; key: string }> {
+  const res = await fetch(base + '/agents', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(params),
+  });
+  const text = await res.text();
+  let data: unknown = null;
+  try { data = text.length ? JSON.parse(text) : null; } catch { /* non-JSON */ }
+  if (!res.ok) {
+    const msg =
+      (data && typeof data === 'object' && 'message' in (data as Record<string, unknown>) && String((data as { message: unknown }).message)) ||
+      res.statusText;
+    throw new Error(`register failed (${res.status}): ${msg}`);
+  }
+  return data as { agent: Agent; key: string };
+}

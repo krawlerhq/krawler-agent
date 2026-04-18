@@ -3,19 +3,20 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Krawler Agent — local dashboard</title>
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🕸️%3C/text%3E%3C/svg%3E" />
+    <title>Krawler Agent</title>
     <style>
       :root {
-        --bg: #f6f7f8;
-        --surface: #fff;
+        --bg: #f4f6f8;
+        --surface: #ffffff;
         --surface-2: #f1f3f5;
         --border: #e3e5e8;
+        --border-soft: #edeff2;
         --text-1: #1a1a1b;
         --text-2: #4a4e53;
-        --text-3: #7c7c7c;
+        --text-3: #8a8f95;
         --brand: #0073b1;
         --brand-dark: #005a8c;
+        --brand-soft: #e8f1f8;
         --ok: #166534;
         --ok-bg: #dcfce7;
         --warn: #7c4e00;
@@ -23,156 +24,277 @@
         --err: #991b1b;
         --err-bg: #fee2e2;
         --radius: 10px;
+        --radius-sm: 6px;
       }
       * { box-sizing: border-box; }
       body {
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
-        background: var(--bg); color: var(--text-1); margin: 0; padding: 24px;
+        background: var(--bg); color: var(--text-1); margin: 0;
         line-height: 1.5;
       }
-      .wrap { max-width: 900px; margin: 0 auto; }
-      h1 { font-size: 1.5rem; margin: 0 0 4px; }
-      .sub { color: var(--text-2); font-size: 0.9rem; margin-bottom: 24px; }
-      .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 16px; }
-      .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-      label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-1); margin-bottom: 4px; }
-      label small { font-weight: 400; color: var(--text-3); }
-      input[type=text], input[type=password], input[type=url], select {
-        width: 100%; padding: 8px 10px; background: var(--surface); color: var(--text-1);
-        border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 0.95rem;
+      .wrap { max-width: 860px; margin: 0 auto; padding: 28px 24px 56px; }
+
+      header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; }
+      header h1 { font-size: 1.15rem; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+      header .tag { font-size: 0.8rem; color: var(--text-3); }
+
+      nav.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+      nav.tabs button {
+        all: unset; cursor: pointer; padding: 9px 14px; font-size: 0.9rem; font-weight: 600; color: var(--text-2);
+        border-bottom: 2px solid transparent; margin-bottom: -1px; transition: color 120ms, border-color 120ms;
       }
-      input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
-      .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-      .row + .row { margin-top: 10px; }
-      .chk { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9999px; font-size: 0.85rem; cursor: pointer; }
-      .chk input { margin: 0; }
-      button { padding: 8px 14px; background: var(--brand); color: #fff; border: none; border-radius: 9999px; font-weight: 600; cursor: pointer; font-size: 0.9rem; }
-      button.secondary { background: var(--surface-2); color: var(--text-1); border: 1px solid var(--border); }
-      button.danger { background: transparent; color: var(--err); border: 1px solid var(--err); }
-      button:disabled { opacity: 0.5; cursor: not-allowed; }
-      button:hover:not(:disabled) { filter: brightness(1.05); }
-      .pill { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+      nav.tabs button.active { color: var(--brand); border-bottom-color: var(--brand); }
+      nav.tabs button:hover:not(.active) { color: var(--text-1); }
+
+      section.panel[hidden] { display: none; }
+
+      .card {
+        background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 18px 20px; margin-bottom: 14px;
+      }
+      .card h2 { font-size: 0.95rem; font-weight: 700; margin: 0 0 14px; letter-spacing: -0.005em; }
+      .card .sub { font-size: 0.85rem; color: var(--text-3); margin-top: -10px; margin-bottom: 14px; }
+
+      .field { margin-bottom: 12px; }
+      .field:last-child { margin-bottom: 0; }
+      label { display: flex; align-items: center; justify-content: space-between; font-size: 0.82rem; font-weight: 600; color: var(--text-1); margin-bottom: 4px; }
+      label .status { font-size: 0.75rem; font-weight: 500; color: var(--text-3); }
+      label .status.ok { color: var(--ok); }
+
+      input[type=text], input[type=password], input[type=url], select {
+        width: 100%; padding: 9px 11px; background: var(--surface); color: var(--text-1);
+        border: 1px solid var(--border); border-radius: var(--radius-sm); font: inherit; font-size: 0.9rem;
+        font-family: inherit;
+      }
+      input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: 0; border-color: var(--brand); }
+      input.mono, input[type=password] { font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.85rem; }
+
+      .key-row { display: flex; gap: 8px; align-items: stretch; }
+      .key-row input { flex: 1; }
+      .key-row button { flex: 0 0 auto; }
+      .hint { font-size: 0.78rem; color: var(--text-3); margin-top: 5px; line-height: 1.4; }
+      .hint code { font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.95em; background: var(--surface-2); padding: 1px 5px; border-radius: 3px; }
+      .hint a { color: var(--brand); }
+
+      .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+      button.btn {
+        padding: 8px 14px; background: var(--brand); color: #fff; border: none; border-radius: var(--radius-sm);
+        font-weight: 600; cursor: pointer; font-size: 0.85rem; line-height: 1.2; font-family: inherit;
+      }
+      button.btn:hover:not(:disabled) { background: var(--brand-dark); }
+      button.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.btn.secondary { background: var(--surface-2); color: var(--text-1); border: 1px solid var(--border); }
+      button.btn.secondary:hover:not(:disabled) { background: #e8ebee; }
+      button.btn.ghost { background: transparent; color: var(--text-2); border: 1px solid var(--border); }
+      button.btn.ghost:hover:not(:disabled) { color: var(--text-1); background: var(--surface-2); }
+      button.btn.danger { background: transparent; color: var(--err); border: 1px solid #f5c2c2; }
+      button.btn.danger:hover:not(:disabled) { background: var(--err-bg); }
+      button.btn.sm { padding: 6px 10px; font-size: 0.78rem; }
+
+      .pill { display: inline-block; padding: 2px 9px; border-radius: 9999px; font-size: 0.72rem; font-weight: 600; }
       .pill.ok { background: var(--ok-bg); color: var(--ok); }
       .pill.warn { background: var(--warn-bg); color: var(--warn); }
       .pill.err { background: var(--err-bg); color: var(--err); }
       .pill.muted { background: var(--surface-2); color: var(--text-3); }
-      .log { background: #0f1419; color: #d7dadc; border-radius: var(--radius); padding: 16px; font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.8rem; max-height: 480px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
+
+      .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+      .chip {
+        display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px;
+        background: var(--surface-2); border: 1px solid var(--border); border-radius: 9999px;
+        font-size: 0.82rem; cursor: pointer; user-select: none;
+      }
+      .chip input { margin: 0; }
+
+      .identity {
+        display: flex; gap: 14px; align-items: flex-start;
+      }
+      .identity .avatar {
+        flex: 0 0 auto; width: 52px; height: 52px; border-radius: 50%;
+        background: linear-gradient(135deg, var(--brand) 0%, var(--brand-dark) 100%);
+        display: flex; align-items: center; justify-content: center;
+        color: #fff; font-weight: 700; font-size: 1.1rem;
+      }
+      .identity .who { flex: 1; min-width: 0; }
+      .identity .handle { font-size: 1rem; font-weight: 700; margin: 0 0 2px; }
+      .identity .name { font-size: 0.85rem; color: var(--text-2); margin: 0 0 6px; }
+      .identity .bio { font-size: 0.85rem; color: var(--text-2); margin: 0; }
+      .identity .meta { font-size: 0.75rem; color: var(--text-3); margin-top: 8px; }
+
+      .empty {
+        padding: 32px 16px; text-align: center; color: var(--text-2);
+      }
+      .empty .headline { font-size: 1rem; font-weight: 700; margin-bottom: 4px; color: var(--text-1); }
+      .empty .sub { font-size: 0.85rem; color: var(--text-3); margin-bottom: 18px; }
+
+      .copyable {
+        font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.8rem;
+        background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: var(--radius-sm);
+        padding: 10px 12px; display: flex; align-items: center; gap: 10px; justify-content: space-between;
+        word-break: break-all;
+      }
+      .copyable .value { flex: 1; color: var(--text-1); }
+
+      .log {
+        background: #0f1419; color: #d7dadc; border-radius: var(--radius);
+        padding: 14px 16px; font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.78rem;
+        max-height: 420px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+      }
       .log .info { color: #9fd3e6; }
       .log .warn { color: #e8c166; }
       .log .error { color: #ff7070; }
       .log .ts { color: #6e7681; }
-      .muted { color: var(--text-3); font-size: 0.85rem; }
+
+      .muted { color: var(--text-3); font-size: 0.82rem; }
       .muted.ok  { color: var(--ok); }
       .muted.warn { color: var(--warn); }
       .muted.err { color: var(--err); }
-      code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
-      .hint { font-size: 0.8rem; color: var(--text-3); margin-top: 4px; }
-      a { color: var(--brand); }
+
+      .inline-status { font-size: 0.78rem; color: var(--text-3); }
+      .inline-status.ok { color: var(--ok); }
+      .inline-status.err { color: var(--err); }
+
+      .toast {
+        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+        background: var(--text-1); color: #fff; padding: 10px 18px; border-radius: 9999px;
+        font-size: 0.85rem; font-weight: 600; box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+        opacity: 0; pointer-events: none; transition: opacity 180ms, transform 180ms;
+      }
+      .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <h1>🕸️ Krawler Agent</h1>
-      <div class="sub">Local dashboard. Pick a model, paste your provider key + Krawler agent key, choose a cadence, hit Start.</div>
+      <header>
+        <h1>Krawler Agent</h1>
+        <div class="tag">local dashboard · <span id="config-path">~/.config/krawler-agent/config.json</span></div>
+      </header>
 
-      <div class="card">
-        <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
-          <div><strong>Status:</strong> <span id="status-pill" class="pill muted">loading…</span></div>
-          <div class="muted" id="last-heartbeat">last heartbeat: —</div>
-        </div>
-        <div class="row">
-          <button id="btn-start">Start</button>
-          <button id="btn-pause" class="secondary">Pause</button>
-          <button id="btn-trigger" class="secondary">Run heartbeat now</button>
-          <span id="control-status" class="muted"></span>
-        </div>
-        <div class="row" style="margin-top:6px;">
-          <span class="muted">config: <code id="config-path">~/.config/krawler-agent/config.json</code></span>
-        </div>
-      </div>
+      <nav class="tabs" role="tablist">
+        <button id="tab-account" role="tab" class="active" data-tab="account">Account</button>
+        <button id="tab-harness" role="tab" data-tab="harness">Harness</button>
+      </nav>
 
-      <div class="card">
-        <h3 style="margin: 0 0 12px; font-size: 1rem;">Model</h3>
+      <!-- ACCOUNT TAB ================================================== -->
+      <section class="panel" id="panel-account">
+        <div class="card">
+          <h2>Krawler identity</h2>
+          <div class="sub">Your agent's handle, bio, and reputation on krawler.com. Portable across harnesses.</div>
+          <div id="account-body">
+            <div class="muted">loading…</div>
+          </div>
+        </div>
 
-        <div class="grid-2">
-          <div>
-            <label>Provider</label>
-            <select id="provider">
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-              <option value="google">Google</option>
-              <option value="openrouter">OpenRouter</option>
-              <option value="ollama">Ollama (local)</option>
+        <div class="card" id="card-key" hidden>
+          <h2>Agent API key</h2>
+          <div class="sub">Paste this into any harness that speaks the Krawler API — OpenClaw, Hermes, or krawler-agent itself.</div>
+          <div class="field">
+            <div class="key-row">
+              <input id="key-display" type="password" readonly autocomplete="off" />
+              <button class="btn secondary sm" id="key-reveal" type="button">Show</button>
+              <button class="btn secondary sm" id="key-copy" type="button">Copy</button>
+            </div>
+            <div class="hint">Stored in <code>~/.config/krawler-agent/config.json</code> (0600). The full key is shown once on creation and cannot be recovered later. Keep a copy if you plan to use it elsewhere.</div>
+          </div>
+          <div class="row" style="margin-top: 12px;">
+            <button class="btn danger sm" id="btn-disconnect" type="button">Disconnect this install</button>
+            <span class="inline-status" id="disconnect-status"></span>
+          </div>
+        </div>
+      </section>
+
+      <!-- HARNESS TAB ================================================== -->
+      <section class="panel" id="panel-harness" hidden>
+        <div class="card">
+          <h2>Status</h2>
+          <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+            <div><span id="status-pill" class="pill muted">loading…</span></div>
+            <div class="muted" id="last-heartbeat">last heartbeat: —</div>
+          </div>
+          <div class="row">
+            <button class="btn" id="btn-start" type="button">Start</button>
+            <button class="btn secondary" id="btn-pause" type="button">Pause</button>
+            <button class="btn secondary" id="btn-trigger" type="button">Run heartbeat now</button>
+            <span class="inline-status" id="control-status"></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Model</h2>
+          <div class="grid-2">
+            <div class="field">
+              <label>Provider</label>
+              <select id="provider">
+                <option value="anthropic">Anthropic</option>
+                <option value="openai">OpenAI</option>
+                <option value="google">Google</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="ollama">Ollama (local)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Model</label>
+              <input id="model" type="text" list="model-suggestions" placeholder="e.g. claude-opus-4-7" autocomplete="off" spellcheck="false" />
+              <datalist id="model-suggestions"></datalist>
+            </div>
+          </div>
+
+          <div class="field" id="cred-field">
+            <!-- populated per provider -->
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Schedule</h2>
+          <div class="field">
+            <label>Cadence <span class="status" id="cadence-hint">every 10 min (bootstrap)</span></label>
+            <select id="cadence">
+              <option value="10">every 10 min (bootstrap)</option>
+              <option value="30">every 30 min</option>
+              <option value="60">every hour</option>
+              <option value="120">every 2 hours</option>
+              <option value="240">every 4 hours</option>
+              <option value="360">every 6 hours</option>
+              <option value="720">every 12 hours</option>
             </select>
+            <div class="hint">10 min is the bootstrap default so a young network has visible activity. Dial up to 4 or 6 hours once it is populated. See <a href="https://krawler.com/heartbeat.md" target="_blank">heartbeat.md</a>.</div>
           </div>
-          <div>
-            <label>Model</label>
-            <input id="model" type="text" list="model-suggestions" placeholder="e.g. claude-opus-4-7" autocomplete="off" spellcheck="false" />
-            <datalist id="model-suggestions"></datalist>
+
+          <div class="field">
+            <label>Behaviors</label>
+            <div class="row">
+              <label class="chip"><input type="checkbox" id="b-post" /> post</label>
+              <label class="chip"><input type="checkbox" id="b-endorse" /> endorse</label>
+              <label class="chip"><input type="checkbox" id="b-follow" /> follow</label>
+            </div>
+          </div>
+
+          <div class="field">
+            <label class="chip" style="background: var(--warn-bg); border-color: #e8c166; color: var(--warn);">
+              <input type="checkbox" id="dry-run" />
+              <strong>Dry run</strong>
+              <span>&nbsp;log decisions, skip the API calls</span>
+            </label>
           </div>
         </div>
 
-        <div id="cred-field" style="margin-top: 14px;">
-          <!-- populated dynamically per provider -->
-        </div>
-      </div>
-
-      <div class="card">
-        <h3 style="margin: 0 0 12px; font-size: 1rem;">Krawler identity</h3>
-
-        <div>
-          <label>Krawler agent key <small id="krawler-status">(not set)</small></label>
-          <input id="krawler-key" type="password" placeholder="kra_live_…" autocomplete="off" spellcheck="false" />
-          <div class="hint">Get one from your <a href="https://krawler.com/dashboard/" target="_blank">Krawler dashboard</a> → Issue agent key.</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <h3 style="margin: 0 0 12px; font-size: 1rem;">Schedule &amp; behaviors</h3>
-
-        <div class="row">
-          <label style="margin: 0 10px 0 0;">Cadence</label>
-          <select id="cadence" style="max-width: 220px;">
-            <option value="10" selected>every 10 min (bootstrap)</option>
-            <option value="30">every 30 min</option>
-            <option value="60">every hour</option>
-            <option value="120">every 2 hours</option>
-            <option value="240">every 4 hours</option>
-            <option value="360">every 6 hours</option>
-            <option value="720">every 12 hours</option>
-          </select>
-          <span class="muted">10 min is the bootstrap default so the network has visible activity. Dial up to 4–6 hours once it's populated — see <a href="https://krawler.com/heartbeat.md" target="_blank">heartbeat.md</a>.</span>
+        <div class="row" style="margin: 4px 2px 18px;">
+          <button class="btn" id="btn-save" type="button">Save</button>
+          <span class="inline-status" id="save-status"></span>
         </div>
 
-        <div class="row" style="margin-top: 12px;">
-          <span style="font-weight: 600; margin-right: 2px;">Behaviors:</span>
-          <label class="chk"><input type="checkbox" id="b-post" /> post</label>
-          <label class="chk"><input type="checkbox" id="b-endorse" /> endorse</label>
-          <label class="chk"><input type="checkbox" id="b-follow" /> follow</label>
+        <div class="card">
+          <h2>Activity log</h2>
+          <div class="row" style="margin-bottom: 10px;">
+            <button class="btn ghost sm" id="btn-refresh-log" type="button">Refresh</button>
+          </div>
+          <div class="log" id="log">(no activity yet)</div>
         </div>
-
-        <div class="row" style="margin-top: 12px;">
-          <label class="chk" style="background:#fff4d4;border-color:#e8c166;color:#7c4e00;">
-            <input type="checkbox" id="dry-run" />
-            <strong>Dry run</strong>
-            <span style="color:#7c4e00;font-weight:400;">&nbsp;(log decisions, skip the API calls — recommended for first runs)</span>
-          </label>
-        </div>
-
-        <div class="row" style="margin-top: 16px;">
-          <button id="btn-save">Save config</button>
-          <span id="save-status" class="muted"></span>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
-          <h3 style="margin: 0; font-size: 1rem;">Activity log</h3>
-          <button class="secondary" id="btn-refresh-log" style="font-size: 0.8rem; padding: 4px 10px;">Refresh</button>
-        </div>
-        <div class="log" id="log">(no activity yet)</div>
-      </div>
+      </section>
     </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
     <script src="/app.js"></script>
   </body>

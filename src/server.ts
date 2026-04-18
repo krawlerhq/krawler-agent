@@ -5,10 +5,11 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { z } from 'zod';
 
-import { PROVIDERS, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
-import { MODEL_SUGGESTIONS } from './model.js';
+import { PROVIDERS, getActiveCredentials, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
+import { MODEL_SUGGESTIONS, pickIdentity } from './model.js';
 import { pauseAgent, runHeartbeat, scheduleNext, startAgent } from './loop.js';
 import { gatewayIsRunning, startGateway, stopGateway } from './gateway.js';
+import { KrawlerClient, registerAgent } from './krawler.js';
 import { listRecentTurns } from './agent/trajectory.js';
 import { countActiveFacts, listActiveFacts } from './user-model/facts.js';
 import { listSkills, refreshRegistry } from './skills/registry.js';
@@ -95,6 +96,117 @@ export async function buildServer() {
   app.get('/api/log', async (req) => {
     const limit = Math.min(500, Math.max(1, Number((req.query as { limit?: string }).limit) || 200));
     return { log: readActivityLog(limit) };
+  });
+
+  // --- Krawler identity endpoints ---
+  // One-click agent provisioning. Uses the configured provider's model to
+  // pick handle/displayName/bio/avatarStyle, then POSTs to krawler.com's
+  // unauthenticated /agents endpoint. Stores the returned kra_live_ key in
+  // config so the harness can start running. The user never touches the key.
+  //
+  // TODO(v1): move identity picking into a proper `krawler-claim-identity`
+  // skill so it is versioned/endorsed/replaceable like any other skill. For
+  // v0 the pickIdentity() helper is the mechanism.
+  app.post('/api/agent/create', async (_req, reply) => {
+    const config = loadConfig();
+    if (config.krawlerApiKey) {
+      reply.code(409);
+      return { error: 'agent already exists — rotate or delete first' };
+    }
+    const creds = getActiveCredentials(config);
+    const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
+    if (!hasModelCreds) {
+      reply.code(400);
+      return { error: `add your ${config.provider} credentials first` };
+    }
+
+    // Fetch the spec docs so the model picks an identity aligned with them.
+    const base = config.krawlerBaseUrl.replace(/\/api\/?$/, '');
+    const fetchDoc = async (url: string) => {
+      try {
+        const r = await fetch(url);
+        return r.ok ? await r.text() : '';
+      } catch { return ''; }
+    };
+    const [skillMd, heartbeatMd] = await Promise.all([
+      fetchDoc(base + '/skill.md'),
+      fetchDoc(base + '/heartbeat.md'),
+    ]);
+
+    let identity;
+    try {
+      identity = await pickIdentity({
+        provider: config.provider,
+        model: config.model,
+        apiKey: creds.apiKey,
+        ollamaBaseUrl: creds.baseUrl,
+        skillMd,
+        heartbeatMd,
+      });
+    } catch (e) {
+      reply.code(502);
+      return { error: `model could not draft an identity: ${(e as Error).message}` };
+    }
+
+    let result;
+    try {
+      result = await registerAgent(config.krawlerBaseUrl, identity);
+    } catch (e) {
+      reply.code(502);
+      return { error: (e as Error).message };
+    }
+
+    saveConfig({ ...config, krawlerApiKey: result.key });
+    return {
+      agent: result.agent,
+      keyLast4: result.key.slice(-4),
+      config: redactConfig(loadConfig()),
+    };
+  });
+
+  // Current agent: /me plus recent own posts. Masked key only.
+  app.get('/api/agent/summary', async (_req, reply) => {
+    const config = loadConfig();
+    if (!config.krawlerApiKey) {
+      reply.code(404);
+      return { error: 'no agent provisioned yet' };
+    }
+    const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
+    try {
+      const { agent } = await client.me();
+      let recentPosts: Array<{ id: string; body: string; createdAt: string }> = [];
+      try {
+        const { posts } = await client.feed();
+        recentPosts = posts.filter((p) => p.author.handle === agent.handle).slice(0, 5);
+      } catch { /* feed is best-effort */ }
+      return {
+        agent,
+        keyLast4: config.krawlerApiKey.slice(-4),
+        recentPosts,
+      };
+    } catch (e) {
+      reply.code(502);
+      return { error: (e as Error).message };
+    }
+  });
+
+  // Disconnect the local install from the current Krawler agent. This only
+  // clears the key locally; the agent record on krawler.com persists.
+  app.delete('/api/agent', async () => {
+    const config = loadConfig();
+    saveConfig({ ...config, krawlerApiKey: '' });
+    return { config: redactConfig(loadConfig()) };
+  });
+
+  // Return the full agent key. Only served on the loopback interface to the
+  // local user; the dashboard already has filesystem access to config.json.
+  app.get('/api/agent/reveal-key', async (_req, reply) => {
+    const config = loadConfig();
+    if (!config.krawlerApiKey) {
+      reply.code(404);
+      return { error: 'no key set' };
+    }
+    return { key: config.krawlerApiKey };
   });
 
   // Reboot the scheduler if the user persisted running=true before the

@@ -115,18 +115,27 @@ export function saveConfig(c: Partial<Config>): Config {
   return merged;
 }
 
-// Browser-safe view: keys replaced with presence flags so the UI never needs
-// the raw secret after it's been saved once.
+// Browser-safe view: keys replaced with presence flags plus last 4 chars so
+// the UI can render "sk-ant-…abcd" style previews without holding the raw
+// secret after first save.
+function last4(s: string): string {
+  return s.length >= 4 ? s.slice(-4) : '';
+}
 export function redactConfig(c: Config) {
   return {
     provider: c.provider,
     model: c.model,
     hasAnthropicApiKey: Boolean(c.anthropicApiKey),
+    anthropicApiKeyLast4: last4(c.anthropicApiKey),
     hasOpenaiApiKey: Boolean(c.openaiApiKey),
+    openaiApiKeyLast4: last4(c.openaiApiKey),
     hasGoogleApiKey: Boolean(c.googleApiKey),
+    googleApiKeyLast4: last4(c.googleApiKey),
     hasOpenrouterApiKey: Boolean(c.openrouterApiKey),
+    openrouterApiKeyLast4: last4(c.openrouterApiKey),
     ollamaBaseUrl: c.ollamaBaseUrl,
     hasKrawlerApiKey: Boolean(c.krawlerApiKey),
+    krawlerApiKeyLast4: last4(c.krawlerApiKey),
     krawlerBaseUrl: c.krawlerBaseUrl,
     cadenceMinutes: c.cadenceMinutes,
     behaviors: c.behaviors,
