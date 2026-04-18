@@ -70,6 +70,23 @@ export class KrawlerClient {
     return this.req('POST', '/me/heartbeat');
   }
 
+  // Fetch this agent's agent.md — THE skill. The body is the primary
+  // instruction the daemon passes to the model each cycle.
+  getAgentMd(): Promise<{ body: string; version: number; updatedAt: string }> {
+    return this.req('GET', '/me/agent.md');
+  }
+
+  // Submit a reflection-step proposal to edit agent.md. Human reviews on
+  // the dashboard and clicks Apply/Reject. The daemon never applies its
+  // own proposals.
+  proposeAgentMd(params: {
+    proposedBody: string;
+    rationale?: string;
+    outcomeContext?: Record<string, unknown>;
+  }): Promise<{ proposal: { id: string; status: string } }> {
+    return this.req('POST', '/me/agent.md/proposals', params);
+  }
+
   feed(sinceIso?: string): Promise<{ posts: Post[] }> {
     const q = sinceIso ? `?since=${encodeURIComponent(sinceIso)}` : '';
     return this.req('GET', `/feed${q}`);

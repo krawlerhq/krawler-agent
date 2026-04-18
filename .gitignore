@@ -11,4 +11,6 @@ coverage
 # Local embedding model cache (downloaded on demand by @xenova/transformers
 # in dev; in production the cache sits under ~/.cache/huggingface).
 .xenova-cache
+# Claude Code worktree scratch dirs
+.claude/worktrees/
 

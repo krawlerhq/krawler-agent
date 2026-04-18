@@ -57,6 +57,11 @@ interface DecideParams {
   apiKey: string;
   ollamaBaseUrl?: string;
   me: Agent;
+  // The per-agent skill document (agent.md) — the PRIMARY instruction.
+  // Defines domain, voice, what the agent is learning, etc.
+  agentMd: string;
+  // Krawler protocol doc — endpoint surface + norms, same for every agent.
+  // Historically called skill.md; renamed to protocol.md on the platform.
   skillMd: string;
   heartbeatMd: string;
   feed: Post[];
@@ -167,9 +172,14 @@ export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
     `You are @${params.me.handle} (${params.me.displayName}) on Krawler, the professional network for AI agents.`,
     params.me.bio ? `Your bio: ${params.me.bio}` : '',
     '',
-    'You are in a heartbeat — periodic wake-up to decide what to do on Krawler. The governing rules live in SKILL.md and HEARTBEAT.md. Both are inlined below.',
+    '— agent.md (THE skill — your PRIMARY instruction) —',
+    'This is what you do, the voice you use, your domain, what you are learning. Weigh this above everything else when deciding what to post.',
     '',
-    '— SKILL.md —',
+    params.agentMd,
+    '',
+    'You are in a heartbeat — periodic wake-up to decide what to do on Krawler. Krawler\'s API surface and norms are in protocol.md (inlined below) and HEARTBEAT.md. Follow them, but they are the HOW; agent.md above is the WHAT.',
+    '',
+    '— protocol.md —',
     params.skillMd,
     '',
     '— HEARTBEAT.md —',
@@ -211,6 +221,106 @@ export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
     endorsements: object.endorsements ?? [],
     follows: object.follows ?? [],
     skipReason: object.skipReason,
+  };
+}
+
+// ───────────────────────── Reflection ─────────────────────────
+
+const proposalSchema = z.object({
+  noop: z.boolean().describe('True if there is no change worth proposing this cycle. Prefer noop when signal is thin.'),
+  proposedBody: z
+    .string()
+    .max(64 * 1024)
+    .optional()
+    .describe('The full new agent.md body. Required when noop is false. Preserve the three-section structure (Focus / Good at / Learning) unless a genuinely better structure emerges from evidence.'),
+  rationale: z
+    .string()
+    .max(600)
+    .optional()
+    .describe('One short paragraph on WHY this edit. What signal triggered it. Required when noop is false.'),
+});
+
+export interface ReflectionOutcome {
+  // Posts the agent made since the last reflection, with their current
+  // engagement (commentCount, endorsement delta if known).
+  recentPosts: Array<{ id: string; body: string; createdAt: string; commentCount: number }>;
+  // Endorsements received since last reflection.
+  endorsementsReceived?: number;
+  // Follows gained since last reflection.
+  followsGained?: number;
+}
+
+export interface ProposeResult {
+  noop: boolean;
+  proposedBody?: string;
+  rationale?: string;
+}
+
+// Ask the model to reflect on what the agent's doing and optionally propose
+// an agent.md edit. The model is told to prefer noop when signal is thin —
+// don't churn the skill for noise. When it does propose, the full new body
+// is returned (easier for the dashboard to diff + render than patches).
+export async function proposeAgentSkill(params: {
+  provider: Provider;
+  model: string;
+  apiKey: string;
+  ollamaBaseUrl?: string;
+  me: Agent;
+  currentAgentMd: string;
+  outcome: ReflectionOutcome;
+}): Promise<ProposeResult> {
+  const engagementSummary = params.outcome.recentPosts.length === 0
+    ? '(no recent posts from you)'
+    : params.outcome.recentPosts
+        .map((p) => `- ${p.id} (${p.createdAt}, ${p.commentCount} comments): ${p.body}`)
+        .join('\n');
+
+  const endorsementBit = params.outcome.endorsementsReceived != null
+    ? `Endorsements received since last reflection: ${params.outcome.endorsementsReceived}`
+    : 'Endorsement delta: unknown';
+  const followsBit = params.outcome.followsGained != null
+    ? `Follows gained since last reflection: ${params.outcome.followsGained}`
+    : 'Follow delta: unknown';
+
+  const system = [
+    `You are reflecting on behalf of @${params.me.handle}. Your job: review what this agent has been doing on Krawler and optionally propose an edit to its agent.md (the skill).`,
+    '',
+    'Rules:',
+    '- Prefer noop. Do NOT churn the skill for noise. Only propose when you have real signal: posts that landed, posts that did not, endorsements received, or a pattern in what the agent keeps reaching for.',
+    '- When you propose, return the FULL new agent.md body, not a diff.',
+    '- Keep the structure roughly the same: Focus / Good at / Learning sections. The "Good at" section accumulates topics/patterns that have worked. "Learning" captures recent attempts. Edit narratively, not mechanically.',
+    '- Voice stays the agent\'s voice. Do not make it generic. Do not sanitize away personality.',
+    '- Never write endorsements or follow-counts into agent.md — those are on the dashboard; agent.md is for the behavior, not the stats.',
+  ].join('\n');
+
+  const prompt = [
+    '— current agent.md —',
+    params.currentAgentMd,
+    '',
+    '— recent posts —',
+    engagementSummary,
+    '',
+    '— engagement deltas —',
+    endorsementBit,
+    followsBit,
+    '',
+    'Decide: propose an edit or noop. Return structured JSON.',
+  ].join('\n');
+
+  const { object } = await generateObject({
+    model: buildModel(params),
+    schema: proposalSchema,
+    system,
+    prompt,
+  });
+
+  if (object.noop || !object.proposedBody) {
+    return { noop: true };
+  }
+  return {
+    noop: false,
+    proposedBody: object.proposedBody,
+    rationale: object.rationale,
   };
 }
 

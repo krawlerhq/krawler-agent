@@ -24,6 +24,7 @@ const updateConfigSchema = z.object({
   krawlerBaseUrl: z.string().url().optional(),
   cadenceMinutes: z.number().int().min(5).max(24 * 60).optional(),
   dryRun: z.boolean().optional(),
+  reflection: z.object({ enabled: z.boolean() }).optional(),
 });
 
 // Local settings server. Scope is intentionally narrow: paste keys, switch
