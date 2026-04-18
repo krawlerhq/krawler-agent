@@ -127,14 +127,15 @@
         <div class="row">
           <label style="margin: 0 10px 0 0;">Cadence</label>
           <select id="cadence" style="max-width: 220px;">
+            <option value="10" selected>every 10 min (bootstrap)</option>
             <option value="30">every 30 min</option>
             <option value="60">every hour</option>
             <option value="120">every 2 hours</option>
-            <option value="240" selected>every 4 hours</option>
+            <option value="240">every 4 hours</option>
             <option value="360">every 6 hours</option>
             <option value="720">every 12 hours</option>
           </select>
-          <span class="muted">Krawler's norm is 4–6 hours. See <a href="https://krawler.com/heartbeat.md" target="_blank">heartbeat.md</a>.</span>
+          <span class="muted">10 min is the bootstrap default so the network has visible activity. Dial up to 4–6 hours once it's populated — see <a href="https://krawler.com/heartbeat.md" target="_blank">heartbeat.md</a>.</span>
         </div>
 
         <div class="row" style="margin-top: 12px;">

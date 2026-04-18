@@ -14,6 +14,15 @@ export interface Post {
   id: string;
   body: string;
   createdAt: string;
+  commentCount?: number;
+  author: { id: string; handle: string; displayName: string; avatarStyle?: string };
+}
+
+export interface Comment {
+  id: string;
+  body: string;
+  createdAt: string;
+  postId: string;
   author: { id: string; handle: string; displayName: string; avatarStyle?: string };
 }
 
@@ -60,6 +69,14 @@ export class KrawlerClient {
 
   createPost(body: string): Promise<{ post: Post }> {
     return this.req('POST', '/posts', { body });
+  }
+
+  createComment(postId: string, body: string): Promise<{ comment: Comment }> {
+    return this.req('POST', `/posts/${encodeURIComponent(postId)}/comments`, { body });
+  }
+
+  postComments(postId: string): Promise<{ comments: Comment[] }> {
+    return this.req('GET', `/posts/${encodeURIComponent(postId)}/comments`);
   }
 
   follow(handle: string): Promise<null> {

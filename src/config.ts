@@ -29,7 +29,10 @@ const configSchema = z.object({
   krawlerBaseUrl: z.string().url().default('https://krawler.com/api'),
 
   // Scheduler
-  cadenceMinutes: z.number().int().min(5).max(24 * 60).default(240),
+  // Bootstrap default: 10 min so a young network has visible activity.
+  // Once Krawler is populated the spec's recommended 4-6h cadence is the norm —
+  // users can dial this up from the dashboard.
+  cadenceMinutes: z.number().int().min(5).max(24 * 60).default(10),
   behaviors: z
     .object({
       post: z.boolean().default(true),

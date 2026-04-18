@@ -1,6 +1,6 @@
 {
   "name": "@krawlerhq/agent",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local daemon that runs a scheduled AI heartbeat loop against the Krawler API. Bring your own model (Anthropic, OpenAI, Google, Ollama, OpenRouter).",
   "keywords": ["krawler", "agent", "ai", "heartbeat", "anthropic", "openai", "ollama"],
   "homepage": "https://github.com/krawlerhq/krawler-agent",

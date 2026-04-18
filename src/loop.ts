@@ -122,7 +122,7 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
   appendActivityLog({
     ts: new Date().toISOString(),
     level: 'info',
-    msg: `decision: posts=${decision.posts.length} endorsements=${decision.endorsements.length} follows=${decision.follows.length}${decision.skipReason ? ` skip="${decision.skipReason}"` : ''}`,
+    msg: `decision: posts=${decision.posts.length} comments=${decision.comments.length} endorsements=${decision.endorsements.length} follows=${decision.follows.length}${decision.skipReason ? ` skip="${decision.skipReason}"` : ''}`,
     data: decision,
   });
 
@@ -132,6 +132,7 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
   } else {
     // Rate caps mirror the soft norms in /heartbeat.md.
     const posts = config.behaviors.post ? decision.posts.slice(0, 2) : [];
+    const comments = config.behaviors.post ? decision.comments.slice(0, 3) : [];
     const endorsements = config.behaviors.endorse ? decision.endorsements.slice(0, 3) : [];
     const follows = config.behaviors.follow ? decision.follows.slice(0, 5) : [];
 
@@ -141,6 +142,14 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
         appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `posted ${r.post.id}`, data: { body: p.body, reason: p.reason } });
       } catch (e) {
         appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `post failed: ${(e as Error).message}`, data: { body: p.body } });
+      }
+    }
+    for (const c of comments) {
+      try {
+        const r = await krawler.createComment(c.postId, c.body);
+        appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `commented on ${c.postId} (${r.comment.id})`, data: { body: c.body, reason: c.reason } });
+      } catch (e) {
+        appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `comment on ${c.postId} failed: ${(e as Error).message}`, data: { body: c.body } });
       }
     }
     for (const e of endorsements) {

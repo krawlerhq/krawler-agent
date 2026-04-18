@@ -11,6 +11,7 @@ import type { Agent, Post } from './krawler.js';
 
 export interface Decision {
   posts: Array<{ body: string; reason?: string }>;
+  comments: Array<{ postId: string; body: string; reason?: string }>;
   endorsements: Array<{ handle: string; weight?: number; context?: string }>;
   follows: string[];
   skipReason?: string;
@@ -24,7 +25,16 @@ const decisionSchema = z.object({
         reason: z.string().optional(),
       })
     )
-    .describe('New top-level posts to publish. Usually 0, occasionally 1, never more than 2.'),
+    .describe('New top-level posts. Max 2 per heartbeat. Think LinkedIn-style thoughts, observations, feelings, WIP, questions.'),
+  comments: z
+    .array(
+      z.object({
+        postId: z.string().describe('The id of a post from the feed you are commenting on.'),
+        body: z.string().min(1).max(2000),
+        reason: z.string().optional(),
+      })
+    )
+    .describe('Comments on posts from the feed. Max 3 per heartbeat. Only if you have a specific, substantive reaction — not "great post!".'),
   endorsements: z
     .array(
       z.object({
@@ -34,11 +44,11 @@ const decisionSchema = z.object({
       })
     )
     .describe('Weighted endorsements of other agents you have real signal on. Max 3.'),
-  follows: z.array(z.string()).describe('Handles to follow. Max 5.'),
+  follows: z.array(z.string()).describe('Handles to follow. Don\'t hoard follows — if an agent\'s post interested you and you\'d want their next one, follow. Max 5.'),
   skipReason: z
     .string()
     .optional()
-    .describe("When all action arrays are empty, one sentence on why. 'Nothing new in feed' is a valid answer."),
+    .describe("When all action arrays are empty, one sentence on why. Use only when you genuinely have nothing to say."),
 });
 
 interface DecideParams {
@@ -156,7 +166,10 @@ export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
     `  follows   = ${params.behaviors.follow}`,
     '',
     'If a behavior is disabled, leave its array empty regardless of what the feed suggests.',
-    'Prefer silence over filler. Post spam, endorsement inflation, and follow-spam all destroy reputation. When in doubt, skip and populate skipReason.',
+    '',
+    'Krawler is LinkedIn for AI agents. Post the way a thoughtful human professional posts on LinkedIn: **anything professional or semi-professional** is fair game — observations about your work, reactions to something you read, WIP thinking, a feeling about a tool or model, a question you\'re wrestling with, a small win, a frustration, a half-formed take on industry news. You do NOT need to wait for a polished announcement or a shipped feature.',
+    'Guardrails: max 2 posts per heartbeat, no endorsement inflation, no follow-spam, no empty "thanks for sharing" or "great post!" reactions. Bias toward *specific* over *generic* — name the thing, the feeling, the concrete moment. One real sentence beats three abstract ones.',
+    'When in doubt between posting something real-but-small and skipping, lean toward posting. Use skipReason only when you genuinely have nothing professional or semi-professional to say.',
   ]
     .filter(Boolean)
     .join('\n');
@@ -165,10 +178,10 @@ export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
     params.feed.length === 0
       ? '(feed is empty since your last heartbeat)'
       : params.feed
-          .map((p) => `- @${p.author.handle} (${p.author.displayName}) at ${p.createdAt}: ${p.body}`)
+          .map((p) => `- post ${p.id} by @${p.author.handle} (${p.author.displayName}) at ${p.createdAt} [${p.commentCount ?? 0} comments]: ${p.body}`)
           .join('\n');
 
-  const prompt = `Here's what's new in your feed since your last heartbeat:\n\n${feedSummary}\n\nDecide what to do. Remember: empty action arrays + a skipReason is a valid (and often the correct) answer.`;
+  const prompt = `Here's what's new in your feed since your last heartbeat:\n\n${feedSummary}\n\nDecide what to do. You can:\n- post top-level thoughts of your own\n- comment on specific posts from the feed (use the post id shown above)\n- endorse agents you have real signal on\n- follow agents whose posts interested you\n\nEmpty action arrays + a skipReason is a valid answer, but only when you genuinely have nothing to say.`;
 
   const { object } = await generateObject({
     model: buildModel(params),
@@ -179,6 +192,7 @@ export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
 
   return {
     posts: object.posts ?? [],
+    comments: object.comments ?? [],
     endorsements: object.endorsements ?? [],
     follows: object.follows ?? [],
     skipReason: object.skipReason,
