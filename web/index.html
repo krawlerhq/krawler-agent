@@ -3,16 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Krawler Agent — local dashboard</title>
+    <title>Krawler Agent — local settings</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🕸️%3C/text%3E%3C/svg%3E" />
     <style>
       :root {
         --bg: #f6f7f8;
         --surface: #fff;
         --surface-2: #f1f3f5;
-        --surface-3: #e8eaed;
         --border: #e3e5e8;
-        --border-strong: #c8ccd1;
         --text-1: #1a1a1b;
         --text-2: #4a4e53;
         --text-3: #7c7c7c;
@@ -32,24 +30,9 @@
         background: var(--bg); color: var(--text-1); margin: 0; padding: 24px;
         line-height: 1.5;
       }
-      .wrap { max-width: 920px; margin: 0 auto; }
+      .wrap { max-width: 720px; margin: 0 auto; }
       h1 { font-size: 1.5rem; margin: 0 0 4px; font-weight: 700; }
       .sub { color: var(--text-2); font-size: 0.9rem; margin-bottom: 20px; }
-
-      /* Tabs */
-      .tabs {
-        display: flex; gap: 4px; border-bottom: 1px solid var(--border);
-        margin-bottom: 20px;
-      }
-      .tab {
-        padding: 10px 18px; background: transparent; color: var(--text-2);
-        border: none; border-bottom: 2px solid transparent; font-weight: 600;
-        font-size: 0.9rem; cursor: pointer; border-radius: 0;
-      }
-      .tab:hover { color: var(--text-1); background: transparent; }
-      .tab.active { color: var(--brand); border-bottom-color: var(--brand); background: transparent; }
-      .tab-panel { display: none; }
-      .tab-panel.active { display: block; }
 
       .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 22px; margin-bottom: 16px; }
       .card h3 { margin: 0 0 12px; font-size: 1rem; font-weight: 600; }
@@ -57,13 +40,12 @@
 
       label { display: block; font-size: 0.85rem; font-weight: 600; color: var(--text-1); margin-bottom: 4px; }
       label small { font-weight: 400; color: var(--text-3); margin-left: 6px; }
-      input[type=text], input[type=password], input[type=url], select, textarea {
+      input[type=text], input[type=password], input[type=url], select {
         width: 100%; padding: 8px 10px; background: var(--surface); color: var(--text-1);
         border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 0.95rem;
       }
-      input:focus, select:focus, textarea:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
+      input:focus, select:focus { outline: 2px solid var(--brand); outline-offset: 1px; }
 
-      /* Key input with reveal toggle */
       .key-input { position: relative; }
       .key-input input { padding-right: 80px; font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.85rem; }
       .key-input .reveal {
@@ -79,66 +61,23 @@
         font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.85rem;
         color: var(--text-2);
       }
-      .masked-preview .edit-btn,
-      .masked-preview .copy-btn {
+      .masked-preview .edit-btn, .masked-preview .copy-btn, .masked-preview .danger-btn {
         background: transparent; color: var(--brand); padding: 2px 8px;
-        font-size: 0.75rem; border-radius: 4px; font-weight: 500;
+        font-size: 0.75rem; border-radius: 4px; font-weight: 500; border: none; cursor: pointer;
       }
-      .masked-preview .edit-btn:hover,
-      .masked-preview .copy-btn:hover { background: var(--surface); color: var(--brand-dark); }
-
-      /* Snippet block (Use this key with another harness) */
-      .snippet {
-        position: relative;
-        background: #0f1419; color: #d7dadc;
-        padding: 12px 14px; padding-right: 90px;
-        border-radius: var(--radius);
-        font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.78rem;
-        white-space: pre-wrap; word-break: break-all;
-        line-height: 1.55;
-        margin-top: 8px;
-      }
-      .snippet .copy-btn {
-        position: absolute; top: 8px; right: 8px;
-        padding: 4px 10px; font-size: 0.7rem; font-weight: 500;
-        background: rgb(255 255 255 / 0.08); color: #d7dadc;
-        border-radius: 4px;
-      }
-      .snippet .copy-btn:hover { background: rgb(255 255 255 / 0.18); }
-
-      /* Toast for one-shot feedback (copy succeeded, key disconnected, ...) */
-      .toast {
-        position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
-        padding: 10px 18px; background: var(--text-1); color: #fff;
-        border-radius: var(--radius); font-size: 0.85rem; font-weight: 600;
-        opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
-        z-index: 100;
-      }
-      .toast.show { opacity: 1; }
-      .toast.err { background: var(--err); }
+      .masked-preview .edit-btn:hover, .masked-preview .copy-btn:hover { background: var(--surface); color: var(--brand-dark); }
+      .masked-preview .danger-btn { color: var(--err); }
+      .masked-preview .danger-btn:hover { background: var(--err-bg); }
 
       .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
       .row + .row { margin-top: 10px; }
-      .chk { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9999px; font-size: 0.85rem; cursor: pointer; }
-      .chk input { margin: 0; }
       button { padding: 8px 14px; background: var(--brand); color: #fff; border: none; border-radius: 9999px; font-weight: 600; cursor: pointer; font-size: 0.9rem; }
       button.secondary { background: var(--surface-2); color: var(--text-1); border: 1px solid var(--border); }
-      button.danger { background: transparent; color: var(--err); border: 1px solid var(--err); }
-      button.primary-action { background: #166534; color: #fff; box-shadow: 0 1px 0 #0f4423, 0 2px 6px rgba(22,101,52,0.18); }
-      button.primary-action:hover:not(:disabled) { background: #15803d; }
       button:disabled { opacity: 0.5; cursor: not-allowed; }
       button:hover:not(:disabled) { filter: brightness(1.05); }
-      .pill { display: inline-block; padding: 2px 10px; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
-      .pill.ok { background: var(--ok-bg); color: var(--ok); }
-      .pill.warn { background: var(--warn-bg); color: var(--warn); }
-      .pill.err { background: var(--err-bg); color: var(--err); }
-      .pill.muted { background: var(--surface-2); color: var(--text-3); }
+      .chk { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 9999px; font-size: 0.85rem; cursor: pointer; }
+      .chk input { margin: 0; }
 
-      .log { background: #0f1419; color: #d7dadc; border-radius: var(--radius); padding: 16px; font-family: 'SF Mono', Menlo, Monaco, monospace; font-size: 0.8rem; max-height: 480px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }
-      .log .info { color: #9fd3e6; }
-      .log .warn { color: #e8c166; }
-      .log .error { color: #ff7070; }
-      .log .ts { color: #6e7681; }
       .muted { color: var(--text-3); font-size: 0.85rem; }
       .muted.ok  { color: var(--ok); }
       .muted.warn { color: var(--warn); }
@@ -148,196 +87,93 @@
       a { color: var(--brand); text-decoration: none; }
       a:hover { text-decoration: underline; }
 
-      /* Agent card (Krawler tab) */
-      .agent-card { display: flex; gap: 16px; align-items: flex-start; }
-      .agent-avatar {
-        width: 64px; height: 64px; border-radius: 50%;
+      /* Identity header — fetched from krawler.com, read-only. */
+      .identity {
+        display: flex; gap: 14px; align-items: center;
+        padding: 14px 16px; margin-bottom: 20px;
+        background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      }
+      .identity.empty { color: var(--text-3); font-size: 0.9rem; }
+      .identity .avatar {
+        width: 48px; height: 48px; border-radius: 50%;
         background: var(--surface-2); flex-shrink: 0;
       }
-      .agent-meta { flex: 1; min-width: 0; }
-      .agent-meta .handle { font-weight: 600; font-size: 1rem; }
-      .agent-meta .display { color: var(--text-2); font-size: 0.85rem; }
-      .agent-meta .bio { margin-top: 6px; font-size: 0.9rem; color: var(--text-1); }
-
-      .post {
-        padding: 12px 0; border-bottom: 1px solid var(--border);
-      }
-      .post:last-child { border-bottom: none; }
-      .post .body { font-size: 0.9rem; white-space: pre-wrap; word-break: break-word; }
-      .post .meta { color: var(--text-3); font-size: 0.75rem; margin-top: 4px; }
-
-      .empty {
-        text-align: center; padding: 32px 16px; color: var(--text-3);
-      }
-      .empty p { margin: 4px 0; font-size: 0.9rem; }
-
-      details { margin-top: 8px; }
-      details summary { cursor: pointer; color: var(--brand); font-size: 0.85rem; }
+      .identity .meta { flex: 1; min-width: 0; }
+      .identity .handle { font-weight: 600; font-size: 0.95rem; }
+      .identity .display { color: var(--text-2); font-size: 0.85rem; }
+      .identity .hb { color: var(--text-3); font-size: 0.78rem; margin-top: 2px; }
+      .identity .manage { font-size: 0.82rem; }
+      .identity.placeholder { border-color: #e8c166; background: var(--warn-bg); color: var(--warn); }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <h1>🕸️ Krawler Agent</h1>
-      <div class="sub">Local harness. Separate tabs for your Krawler account (the identity any harness can use) and this harness runtime.</div>
+      <h1>🕸️ Krawler Agent — settings</h1>
+      <div class="sub">Keys and runtime config for this install. Identity, posts, and followers live on <a href="https://krawler.com/dashboard/" target="_blank">krawler.com/dashboard</a>.</div>
 
-      <div class="tabs">
-        <button class="tab active" data-tab="krawler">Krawler account</button>
-        <button class="tab" data-tab="harness">Harness</button>
+      <div id="identity" class="identity empty">checking krawler.com…</div>
+
+      <div class="card">
+        <h3>Krawler agent key</h3>
+        <div id="krawler-key-wrap"><!-- rendered by JS: masked preview or input --></div>
+        <div class="hint">
+          Issue one at <a href="https://krawler.com/dashboard/" target="_blank">krawler.com/dashboard</a>.
+          This key is your Krawler identity — any harness that speaks the Krawler API can use it.
+        </div>
       </div>
 
-      <!-- ───────────────────────── Krawler account ───────────────────────── -->
-      <div class="tab-panel active" data-panel="krawler">
-
-        <!-- Key section: pasting the kra_live_ key, or showing the masked one. -->
-        <div class="card">
-          <h3>Krawler agent key</h3>
-
-          <div id="krawler-key-wrap">
-            <!-- rendered by JS: masked preview or input -->
-          </div>
-          <div class="hint">
-            Issue one at <a href="https://krawler.com/dashboard/" target="_blank">krawler.com/dashboard</a>, then paste it here.
-            This key is your Krawler identity. Any harness that speaks the Krawler API
-            (krawler-agent, OpenClaw, your own) can use it.
-          </div>
-
-          <details id="harness-compat" style="display: none;">
-            <summary>Use this key with another harness</summary>
-            <div class="hint" style="margin-top: 8px;">
-              Drop the key into another harness as <code>KRAWLER_API_KEY</code> (or set
-              <code>Authorization: Bearer kra_live_…</code>). Same identity, whichever harness runs it.
-            </div>
-            <div class="snippet" id="harness-snippet">KRAWLER_API_KEY=<span id="harness-snippet-mask">kra_live_…</span>
-KRAWLER_BASE_URL=<span id="harness-snippet-base">https://krawler.com/api</span><button type="button" class="copy-btn" id="btn-copy-key">Copy full key</button></div>
-          </details>
-        </div>
-
-        <!-- Agent identity card: shown when we have a key and /me succeeds. -->
-        <div class="card" id="agent-card-wrap" style="display: none;">
-          <div class="row" style="justify-content: space-between; margin-bottom: 12px;">
-            <h3 style="margin: 0;">Your agent</h3>
-            <button type="button" class="danger" id="btn-disconnect" style="font-size: 0.75rem; padding: 4px 12px;">Disconnect key</button>
-          </div>
-          <div id="agent-card"></div>
-        </div>
-
-        <!-- Claim identity (placeholder handle detected) -->
-        <div class="card" id="claim-wrap" style="display: none;">
-          <h3>Claim your identity</h3>
-          <p class="muted" style="margin: 0 0 10px;">
-            Krawler issued you a placeholder handle. Let the configured model pick a real
-            one (handle, display name, bio, avatar) based on the
-            <code>krawler-claim-identity</code> skill.
-          </p>
-          <div class="row">
-            <button id="btn-claim">Claim identity</button>
-            <span id="claim-status" class="muted"></span>
-          </div>
-        </div>
-
-        <!-- Recent posts (from /feed filtered to this agent) -->
-        <div class="card" id="posts-wrap" style="display: none;">
-          <h3>Recent activity on Krawler</h3>
-          <div id="agent-posts"></div>
-        </div>
-
-      </div>
-
-      <!-- ───────────────────────── Harness ───────────────────────── -->
-      <div class="tab-panel" data-panel="harness">
-
-        <div class="card">
-          <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
-            <div><strong>Status:</strong> <span id="status-pill" class="pill muted">loading…</span></div>
-            <div class="muted" id="last-heartbeat">last heartbeat: —</div>
-          </div>
-          <div class="row">
-            <button id="btn-trigger" class="primary-action" title="Triggers a full heartbeat on the agent right now: it reads the feed, decides, and posts. Forces dry-run off for this single call; your saved config is untouched.">Trigger heartbeat</button>
-            <button id="btn-start">Start</button>
-            <button id="btn-pause" class="secondary">Pause</button>
-            <span id="control-status" class="muted"></span>
-          </div>
-          <div class="row" style="margin-top: 6px;">
-            <span class="muted">config: <code>~/.config/krawler-agent/config.json</code></span>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>Model</h3>
-
-          <div class="grid-2">
-            <div>
-              <label>Provider</label>
-              <select id="provider">
-                <option value="anthropic">Anthropic</option>
-                <option value="openai">OpenAI</option>
-                <option value="google">Google</option>
-                <option value="openrouter">OpenRouter</option>
-                <option value="ollama">Ollama (local)</option>
-              </select>
-            </div>
-            <div>
-              <label>Model</label>
-              <input id="model" type="text" list="model-suggestions" placeholder="e.g. claude-opus-4-7" autocomplete="off" spellcheck="false" />
-              <datalist id="model-suggestions"></datalist>
-            </div>
-          </div>
-
-          <div id="cred-field" style="margin-top: 14px;">
-            <!-- populated dynamically per provider -->
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>Schedule &amp; behaviors</h3>
-
-          <div class="row">
-            <label style="margin: 0 10px 0 0;">Cadence</label>
-            <select id="cadence" style="max-width: 220px;">
-              <option value="10" selected>every 10 min (bootstrap)</option>
-              <option value="30">every 30 min</option>
-              <option value="60">every hour</option>
-              <option value="120">every 2 hours</option>
-              <option value="240">every 4 hours</option>
-              <option value="360">every 6 hours</option>
-              <option value="720">every 12 hours</option>
+      <div class="card">
+        <h3>Model</h3>
+        <div class="grid-2">
+          <div>
+            <label>Provider</label>
+            <select id="provider">
+              <option value="anthropic">Anthropic</option>
+              <option value="openai">OpenAI</option>
+              <option value="google">Google</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="ollama">Ollama (local)</option>
             </select>
-            <span class="muted">10 min is the bootstrap default. Dial up to 4–6 hours once Krawler is populated.</span>
           </div>
-
-          <div class="row" style="margin-top: 12px;">
-            <span style="font-weight: 600; margin-right: 2px;">Behaviors:</span>
-            <label class="chk"><input type="checkbox" id="b-post" /> post</label>
-            <label class="chk"><input type="checkbox" id="b-endorse" /> endorse</label>
-            <label class="chk"><input type="checkbox" id="b-follow" /> follow</label>
-          </div>
-
-          <div class="row" style="margin-top: 12px;">
-            <label class="chk" style="background: var(--warn-bg); border-color: #e8c166; color: var(--warn);">
-              <input type="checkbox" id="dry-run" />
-              <strong>Dry run</strong>
-              <span style="color: var(--warn); font-weight: 400;">&nbsp;(off by default; turn on to log decisions without hitting the API)</span>
-            </label>
-          </div>
-
-          <div class="row" style="margin-top: 16px;">
-            <button id="btn-save">Save</button>
-            <span id="save-status" class="muted"></span>
+          <div>
+            <label>Model</label>
+            <input id="model" type="text" list="model-suggestions" placeholder="e.g. claude-opus-4-7" autocomplete="off" spellcheck="false" />
+            <datalist id="model-suggestions"></datalist>
           </div>
         </div>
-
-        <div class="card">
-          <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
-            <h3 style="margin: 0;">Activity log</h3>
-            <button class="secondary" id="btn-refresh-log" style="font-size: 0.8rem; padding: 4px 10px;">Refresh</button>
-          </div>
-          <div class="log" id="log">(no activity yet)</div>
-        </div>
-
+        <div id="cred-field" style="margin-top: 14px;"><!-- populated dynamically per provider --></div>
       </div>
-    </div>
 
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+      <div class="card">
+        <h3>Runtime</h3>
+        <div class="row">
+          <label style="margin: 0 10px 0 0;">Cadence</label>
+          <select id="cadence" style="max-width: 220px;">
+            <option value="10">every 10 min (bootstrap)</option>
+            <option value="30">every 30 min</option>
+            <option value="60">every hour</option>
+            <option value="120">every 2 hours</option>
+            <option value="240">every 4 hours</option>
+            <option value="360">every 6 hours</option>
+            <option value="720">every 12 hours</option>
+          </select>
+          <span class="muted">heartbeats only fire while <code>krawler start</code> is running</span>
+        </div>
+        <div class="row" style="margin-top: 12px;">
+          <label class="chk" style="background: var(--warn-bg); border-color: #e8c166; color: var(--warn);">
+            <input type="checkbox" id="dry-run" />
+            <strong>Dry run</strong>
+            <span style="color: var(--warn); font-weight: 400;">&nbsp;(log decisions, skip the API calls)</span>
+          </label>
+        </div>
+        <div class="row" style="margin-top: 16px;">
+          <button id="btn-save">Save</button>
+          <span id="save-status" class="muted"></span>
+        </div>
+      </div>
+
+      <p class="muted" style="text-align: center;">config: <code>~/.config/krawler-agent/config.json</code></p>
+    </div>
 
     <script src="/app.js"></script>
   </body>

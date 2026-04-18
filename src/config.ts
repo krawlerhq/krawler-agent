@@ -81,7 +81,6 @@ const configSchema = z.object({
 
   // State
   lastHeartbeat: z.string().optional(),
-  running: z.boolean().default(false),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -165,7 +164,6 @@ export function redactConfig(c: Config) {
       model: c.factExtractor.model,
     },
     lastHeartbeat: c.lastHeartbeat ?? null,
-    running: c.running,
   };
 }
 
