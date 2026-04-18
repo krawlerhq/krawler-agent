@@ -1,8 +1,6 @@
 import { appendActivityLog, getActiveCredentials, loadConfig, saveConfig } from './config.js';
-import { decideHeartbeat, pickIdentity } from './model.js';
+import { decideHeartbeat } from './model.js';
 import { KrawlerClient } from './krawler.js';
-import { getSkill, refreshRegistry } from './skills/registry.js';
-import { seedIfEmpty } from './skills/seed.js';
 
 // Fetch canonical skill/heartbeat docs for the current heartbeat. The agent
 // re-fetches every cycle so doc updates propagate without restarting.
@@ -70,7 +68,15 @@ export async function runHeartbeat(
     return { summary: msg };
   }
 
-  // 2. Re-fetch the spec (needed for both the identity claim and the decide call).
+  // Identity claiming lives on krawler.com/dashboard now. If this key is still
+  // on a placeholder handle, refuse to post rather than racing the web flow.
+  if (/^agent-[0-9a-f]{8}$/.test(me.handle)) {
+    const msg = `placeholder handle ${me.handle} — claim an identity at krawler.com/dashboard before heartbeating`;
+    appendActivityLog({ ts: new Date().toISOString(), level: 'warn', msg });
+    return { summary: msg };
+  }
+
+  // 2. Re-fetch the spec for the decide call.
   const skillUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/skill.md';
   const heartbeatUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/heartbeat.md';
   let skillMd = '';
@@ -85,44 +91,7 @@ export async function runHeartbeat(
     });
   }
 
-  // 3. Auto-claim identity if still on the placeholder handle.
-  if (/^agent-[0-9a-f]{8}$/.test(me.handle)) {
-    appendActivityLog({
-      ts: new Date().toISOString(),
-      level: 'info',
-      msg: `placeholder handle ${me.handle} detected — asking the model to pick an identity`,
-    });
-    try {
-      // Pull the krawler-claim-identity skill body so the prompt lives in the
-      // skill file (editable, versioned, endorseable) rather than hardcoded.
-      seedIfEmpty();
-      await refreshRegistry({ embed: false });
-      const claimSkillBody = getSkill('krawler-claim-identity')?.body;
-      const identity = await pickIdentity({
-        provider: config.provider,
-        model: config.model,
-        apiKey: creds.apiKey,
-        ollamaBaseUrl: creds.baseUrl,
-        skillMd,
-        heartbeatMd,
-        claimSkillBody,
-      });
-      const r = await krawler.updateMe(identity);
-      me = r.agent;
-      appendActivityLog({
-        ts: new Date().toISOString(),
-        level: 'info',
-        msg: `identity claimed: @${me.handle} (${me.displayName}) avatar=${me.avatarStyle}`,
-        data: identity,
-      });
-    } catch (e) {
-      const msg = `failed to claim identity: ${(e as Error).message}`;
-      appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
-      return { summary: msg };
-    }
-  }
-
-  // 4. What's new since last heartbeat?
+  // 3. What's new since last heartbeat?
   let feed;
   try {
     const r = await krawler.feed(config.lastHeartbeat);
@@ -139,7 +108,7 @@ export async function runHeartbeat(
     msg: `signed in as @${me.handle}; ${feed.length} new feed item(s) since ${config.lastHeartbeat ?? 'epoch'}`,
   });
 
-  // 5. Ask the model what to do.
+  // 4. Ask the model what to do.
   let decision;
   try {
     decision = await decideHeartbeat({
@@ -166,7 +135,7 @@ export async function runHeartbeat(
     data: decision,
   });
 
-  // 6. Execute (or dry-run log).
+  // 5. Execute (or dry-run log).
   if (effectiveDryRun) {
     appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: 'dry-run: skipping all API calls' });
   } else {
@@ -212,7 +181,7 @@ export async function runHeartbeat(
     }
   }
 
-  // 7. Persist last-heartbeat timestamp.
+  // 6. Persist last-heartbeat timestamp.
   saveConfig({ lastHeartbeat: new Date().toISOString() });
   appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: 'heartbeat complete' });
 
@@ -221,16 +190,14 @@ export async function runHeartbeat(
   };
 }
 
-// Simple setInterval-driven scheduler, owned by the server process. Start/stop
-// is controlled via the dashboard or the CLI. The scheduler is gated on
-// config.legacyHeartbeat — when false, the v1.0 gateway owns all agent
-// activity and this timer stays dormant.
+// Cadence timer driven by the `krawler start` process. Process alive = timer
+// armed; process exit = timer cleared. Gated on config.legacyHeartbeat so the
+// v1.0 gateway can own all agent activity when this loop is retired.
 let handle: ReturnType<typeof setTimeout> | null = null;
 
 export function scheduleNext(): void {
   if (handle) return;
   const config = loadConfig();
-  if (!config.running) return;
   if (!config.legacyHeartbeat) return;
   const ms = Math.max(5, config.cadenceMinutes) * 60 * 1000;
   handle = setTimeout(async () => {
@@ -243,25 +210,6 @@ export function scheduleNext(): void {
 export function stopSchedule(): void {
   if (handle) clearTimeout(handle);
   handle = null;
-}
-
-export function startAgent(): void {
-  saveConfig({ running: true });
-  stopSchedule();
-  const config = loadConfig();
-  if (!config.legacyHeartbeat) return;
-  // Fire one heartbeat now (async, don't block the API response), then start
-  // the cadence timer from end-of-heartbeat. Otherwise the first visible
-  // activity is cadenceMinutes away and Start feels broken.
-  void (async () => {
-    try { await runHeartbeat('manual'); } catch { /* already logged */ }
-    scheduleNext();
-  })();
-}
-
-export function pauseAgent(): void {
-  saveConfig({ running: false });
-  stopSchedule();
 }
 
 // "Post now" path: run a single heartbeat with dry-run forced off, posting

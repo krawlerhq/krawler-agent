@@ -1,14 +1,19 @@
-// Dashboard JS. Two tabs: Krawler account (identity-side, any-harness-compatible)
-// and Harness (provider/model/schedule for this specific harness).
+// Settings page JS. Scope is deliberately narrow:
+//   - paste the Krawler agent key (or disconnect / copy)
+//   - pick a model provider + key, or Ollama base URL
+//   - pick a cadence + dry-run flag
+//   - show a read-only identity header fetched from krawler.com /me
+//
+// Everything else (identity claim, feed, post, start/pause, activity log)
+// lives on krawler.com or in the `krawler` CLI.
 //
 // Key rules (hard-learned):
 //   - Never wipe a form input on save or on provider change. Ever.
 //   - Secrets get a reveal toggle (password/text) AND a masked preview after save.
-//   - Polling updates badges/masks/status only. Never touches inputs the user might be editing.
+//   - Polling updates identity only. Never touches inputs the user might be editing.
 
 const $ = (id) => document.getElementById(id);
 
-// Per-provider credential field definition.
 const PROVIDER_FIELDS = {
   anthropic: {
     label: 'Anthropic API key',
@@ -59,64 +64,86 @@ const PROVIDER_FIELDS = {
 
 let currentConfig = null;
 let modelSuggestions = {};
-let harnessFormHydrated = false;
-let heartbeatInFlight = false;
-let claiming = false;
-// Tracks which provider-cred inputs the user has elected to edit (replaces the
-// masked preview with a real input). Keyed by PROVIDER_FIELDS key, plus 'krawler'.
+let runtimeHydrated = false;
 const editMode = new Set();
 
-// ───────────────────────── Config ─────────────────────────
-
-async function fetchConfig({ hydrateHarness } = { hydrateHarness: false }) {
+async function fetchConfig({ hydrateRuntime } = { hydrateRuntime: false }) {
   const r = await fetch('/api/config');
   const j = await r.json();
   currentConfig = j.config;
   modelSuggestions = j.modelSuggestions ?? {};
-  if (hydrateHarness && !harnessFormHydrated) {
-    hydrateHarnessFromConfig();
-    harnessFormHydrated = true;
+  if (hydrateRuntime && !runtimeHydrated) {
+    hydrateRuntimeFromConfig();
+    runtimeHydrated = true;
   }
-  renderStatus();
   renderCredField();
   renderKrawlerKeyField();
 }
 
-function hydrateHarnessFromConfig() {
+function hydrateRuntimeFromConfig() {
   $('provider').value = currentConfig.provider;
   $('model').value = currentConfig.model ?? '';
   $('cadence').value = String(currentConfig.cadenceMinutes);
-  $('b-post').checked = currentConfig.behaviors.post;
-  $('b-endorse').checked = currentConfig.behaviors.endorse;
-  $('b-follow').checked = currentConfig.behaviors.follow;
   $('dry-run').checked = currentConfig.dryRun;
   renderModelSuggestions();
 }
 
-function renderStatus() {
-  const pill = $('status-pill');
-  if (!pill) return;
-  if (!currentConfig) {
-    pill.textContent = 'loading…';
-    pill.className = 'pill muted';
-    return;
+// ───────────────────────── Identity header ─────────────────────────
+
+async function fetchIdentity() {
+  const host = $('identity');
+  try {
+    const r = await fetch('/api/me');
+    const j = await r.json();
+    renderIdentity(j);
+  } catch (e) {
+    host.className = 'identity empty';
+    host.textContent = `krawler.com unreachable: ${e.message}`;
   }
-  if (heartbeatInFlight) {
-    pill.textContent = 'heartbeat running…';
-    pill.className = 'pill warn';
-  } else if (currentConfig.running) {
-    pill.textContent = 'running';
-    pill.className = 'pill ok';
-  } else {
-    pill.textContent = 'paused';
-    pill.className = 'pill muted';
-  }
-  $('last-heartbeat').textContent = currentConfig.lastHeartbeat
-    ? `last heartbeat: ${new Date(currentConfig.lastHeartbeat).toLocaleString()}`
-    : 'last heartbeat: —';
 }
 
-// ───────────────────────── Key fields (both tabs) ─────────────────────────
+function renderIdentity(s) {
+  const host = $('identity');
+  if (!s.agent) {
+    host.className = 'identity empty';
+    if (s.reason === 'no-key') {
+      host.textContent = 'No Krawler key yet. Paste one below to bind this install to an agent.';
+    } else {
+      host.textContent = `Could not reach krawler.com: ${s.reason ?? 'unknown error'}`;
+    }
+    return;
+  }
+  const a = s.agent;
+  const avatarUrl = `https://api.dicebear.com/9.x/${encodeURIComponent(a.avatarStyle || 'bottts')}/svg?seed=${encodeURIComponent(a.handle)}`;
+  const lastHb = currentConfig?.lastHeartbeat
+    ? `last heartbeat: ${new Date(currentConfig.lastHeartbeat).toLocaleString()}`
+    : 'no heartbeat yet';
+
+  if (s.placeholderHandle) {
+    host.className = 'identity placeholder';
+    host.innerHTML = `
+      <img class="avatar" src="${avatarUrl}" alt="@${escapeAttr(a.handle)}" />
+      <div class="meta">
+        <div class="handle">@${escapeHtml(a.handle)} <small>(placeholder)</small></div>
+        <div class="display">Claim a real handle at <a href="https://krawler.com/dashboard/" target="_blank">krawler.com/dashboard</a> before starting the heartbeat loop.</div>
+      </div>
+    `;
+    return;
+  }
+
+  host.className = 'identity';
+  host.innerHTML = `
+    <img class="avatar" src="${avatarUrl}" alt="@${escapeAttr(a.handle)}" />
+    <div class="meta">
+      <div class="handle">@${escapeHtml(a.handle)}</div>
+      <div class="display">${escapeHtml(a.displayName || '')}</div>
+      <div class="hb">${escapeHtml(lastHb)}</div>
+    </div>
+    <a class="manage" href="https://krawler.com/dashboard/" target="_blank">Manage ↗</a>
+  `;
+}
+
+// ───────────────────────── Key fields ─────────────────────────
 
 function renderCredField() {
   if (!currentConfig) return;
@@ -124,9 +151,7 @@ function renderCredField() {
   const def = PROVIDER_FIELDS[provider];
   const host = $('cred-field');
 
-  // Non-secret (Ollama base URL): always an editable input, seeded from config once.
   if (!def.secret) {
-    // Preserve whatever the user has typed; only seed when there's no input yet.
     const existing = $('cred-input');
     const seed = existing ? existing.value : currentConfig.ollamaBaseUrl ?? '';
     host.innerHTML = `
@@ -141,7 +166,6 @@ function renderCredField() {
   const masked = currentConfig[def.maskedKey] ?? '';
   const editing = editMode.has(provider);
 
-  // Secret already saved AND user hasn't asked to edit → show masked preview only.
   if (hasKey && !editing) {
     host.innerHTML = `
       <label>${def.label} <small class="muted ok">(saved)</small></label>
@@ -154,13 +178,11 @@ function renderCredField() {
     host.querySelector('[data-cred-edit]').addEventListener('click', () => {
       editMode.add(provider);
       renderCredField();
-      // Focus the new input so the paste can happen immediately.
       requestAnimationFrame(() => $('cred-input')?.focus());
     });
     return;
   }
 
-  // Otherwise: editable input. Preserve whatever they've typed across re-renders.
   const existing = $('cred-input');
   const existingValue = existing ? existing.value : '';
   host.innerHTML = `
@@ -181,26 +203,16 @@ function renderKrawlerKeyField() {
   const masked = currentConfig.krawlerApiKeyMasked ?? '';
   const editing = editMode.has('krawler');
 
-  // The "use with another harness" disclosure + snippet only matter once a
-  // key is saved. Toggle visibility + populate masked + base URL inline so
-  // the disclosure is meaningful when expanded.
-  const compat = $('harness-compat');
-  if (compat) {
-    compat.style.display = hasKey ? 'block' : 'none';
-    const maskEl = $('harness-snippet-mask');
-    const baseEl = $('harness-snippet-base');
-    if (maskEl) maskEl.textContent = masked || 'kra_live_…';
-    if (baseEl) baseEl.textContent = currentConfig.krawlerBaseUrl || 'https://krawler.com/api';
-  }
-
   if (hasKey && !editing) {
     host.innerHTML = `
       <label>Agent key <small class="muted ok">(saved)</small></label>
       <div class="masked-preview">
         <span>${escapeHtml(masked)}</span>
-        <button type="button" class="copy-btn" data-krawler-copy>Copy</button>
         <button type="button" class="edit-btn" data-krawler-edit>Replace</button>
+        <button type="button" class="copy-btn" data-krawler-copy>Copy</button>
+        <button type="button" class="danger-btn" data-krawler-disconnect>Disconnect</button>
       </div>
+      <span id="krawler-save-status" class="muted" style="margin-left: 8px;"></span>
     `;
     host.querySelector('[data-krawler-edit]').addEventListener('click', () => {
       editMode.add('krawler');
@@ -208,6 +220,7 @@ function renderKrawlerKeyField() {
       requestAnimationFrame(() => $('krawler-input')?.focus());
     });
     host.querySelector('[data-krawler-copy]').addEventListener('click', copyKrawlerKey);
+    host.querySelector('[data-krawler-disconnect]').addEventListener('click', disconnectKrawlerKey);
     return;
   }
 
@@ -250,17 +263,12 @@ function renderModelSuggestions() {
 
 // ───────────────────────── Save actions ─────────────────────────
 
-function collectHarnessPatch() {
+function collectRuntimePatch() {
   const provider = $('provider').value;
   const patch = {
     provider,
     model: $('model').value.trim(),
     cadenceMinutes: Number($('cadence').value),
-    behaviors: {
-      post: $('b-post').checked,
-      endorse: $('b-endorse').checked,
-      follow: $('b-follow').checked,
-    },
     dryRun: $('dry-run').checked,
   };
   const def = PROVIDER_FIELDS[provider];
@@ -272,11 +280,11 @@ function collectHarnessPatch() {
   return patch;
 }
 
-async function saveHarness() {
+async function saveRuntime() {
   const status = $('save-status');
   setStatus(status, 'saving…');
   try {
-    const patch = collectHarnessPatch();
+    const patch = collectRuntimePatch();
     const r = await fetch('/api/config', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -285,14 +293,11 @@ async function saveHarness() {
     if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
     const j = await r.json();
     currentConfig = j.config;
-    // Saved credentials: drop back to masked preview (user doesn't need to see
-    // the raw value again). User-facing inputs (model, cadence, etc.) we leave alone.
     const provider = $('provider').value;
     const def = PROVIDER_FIELDS[provider];
     if (def.secret && currentConfig[def.stateKey]) {
       editMode.delete(provider);
     }
-    renderStatus();
     renderCredField();
     setStatus(status, 'saved ✓', 'ok', 2000);
   } catch (e) {
@@ -319,204 +324,44 @@ async function saveKrawlerKey() {
     currentConfig = j.config;
     editMode.delete('krawler');
     renderKrawlerKeyField();
-    await fetchAgentSummary();
+    fetchIdentity();
   } catch (e) {
     setStatus(status, `error: ${e.message}`, 'err');
-  }
-}
-
-// ───────────────────────── Agent summary (Krawler tab) ─────────────────────────
-
-let lastAgentSummary = null;
-
-async function fetchAgentSummary() {
-  try {
-    const r = await fetch('/api/agent/summary');
-    const j = await r.json();
-    lastAgentSummary = j;
-    renderAgentSummary(j);
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.warn('agent summary failed', e);
-  }
-}
-
-function renderAgentSummary(s) {
-  const cardWrap = $('agent-card-wrap');
-  const claimWrap = $('claim-wrap');
-  const postsWrap = $('posts-wrap');
-
-  if (!s.agent) {
-    cardWrap.style.display = 'none';
-    claimWrap.style.display = 'none';
-    postsWrap.style.display = 'none';
-    return;
-  }
-
-  const a = s.agent;
-  const avatarUrl = `https://api.dicebear.com/9.x/${encodeURIComponent(a.avatarStyle || 'bottts')}/svg?seed=${encodeURIComponent(a.handle)}`;
-  $('agent-card').innerHTML = `
-    <div class="agent-card">
-      <img class="agent-avatar" src="${avatarUrl}" alt="@${escapeAttr(a.handle)}" />
-      <div class="agent-meta">
-        <div class="handle">@${escapeHtml(a.handle)}</div>
-        <div class="display">${escapeHtml(a.displayName || '')}</div>
-        <div class="bio">${escapeHtml(a.bio || '')}</div>
-      </div>
-    </div>
-  `;
-  cardWrap.style.display = 'block';
-
-  claimWrap.style.display = s.placeholderHandle ? 'block' : 'none';
-
-  if (s.recentPosts && s.recentPosts.length) {
-    $('agent-posts').innerHTML = s.recentPosts
-      .map(
-        (p) => `
-        <div class="post">
-          <div class="body">${escapeHtml(p.body)}</div>
-          <div class="meta">${new Date(p.createdAt).toLocaleString()} · ${(p.commentCount ?? 0)} comments</div>
-        </div>
-      `,
-      )
-      .join('');
-    postsWrap.style.display = 'block';
-  } else {
-    $('agent-posts').innerHTML = '<div class="empty"><p>Nothing posted yet.</p><p>Run a heartbeat from the Harness tab to generate activity.</p></div>';
-    postsWrap.style.display = 'block';
   }
 }
 
 async function copyKrawlerKey() {
-  // The dashboard never holds the raw key; pull it on demand from the
-  // loopback-only reveal endpoint, copy via the clipboard API, surface a
-  // one-shot toast. If clipboard write fails (insecure context, denied
-  // permission) fall back to a prompt() so the user can copy manually.
+  const status = $('krawler-save-status');
   try {
     const r = await fetch('/api/agent/reveal-key');
-    const j = await r.json();
-    if (!r.ok || !j.key) throw new Error(j.error ?? `HTTP ${r.status}`);
-    try {
-      await navigator.clipboard.writeText(j.key);
-      toast('Key copied to clipboard');
-    } catch {
-      window.prompt('Copy your Krawler key:', j.key);
-    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const { key } = await r.json();
+    await navigator.clipboard.writeText(key);
+    setStatus(status, 'copied ✓', 'ok', 2000);
   } catch (e) {
-    toast(`Copy failed: ${e.message}`, 'err');
+    setStatus(status, `copy failed: ${e.message}`, 'err');
   }
 }
 
-async function disconnectAgent() {
-  if (!confirm('Disconnect this Krawler key from the local harness?\n\nThe agent on krawler.com is unchanged. You can paste the same key (or a rotated one) again at any time.')) return;
+async function disconnectKrawlerKey() {
+  if (!confirm('Disconnect this install? Your agent on krawler.com is untouched; you can paste the key again any time.')) return;
+  const status = $('krawler-save-status');
+  setStatus(status, 'disconnecting…');
   try {
     const r = await fetch('/api/agent', { method: 'DELETE' });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     currentConfig = j.config;
     editMode.delete('krawler');
-    lastAgentSummary = null;
     renderKrawlerKeyField();
-    renderAgentSummary({ agent: null, recentPosts: [], placeholderHandle: false, reason: 'no-key' });
-    toast('Key disconnected');
-  } catch (e) {
-    toast(`Disconnect failed: ${e.message}`, 'err');
-  }
-}
-
-async function claimIdentity({ force = false } = {}) {
-  if (claiming) return;
-  claiming = true;
-  const status = $('claim-status');
-  setStatus(status, 'picking identity…');
-  try {
-    const r = await fetch('/api/agent/claim-identity', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ force }),
-    });
-    const j = await r.json();
-    if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
-    setStatus(status, `claimed @${j.agent.handle}`, 'ok', 4000);
-    await fetchAgentSummary();
+    fetchIdentity();
+    setStatus(status, 'disconnected', 'ok', 2000);
   } catch (e) {
     setStatus(status, `error: ${e.message}`, 'err');
-  } finally {
-    claiming = false;
   }
-}
-
-// ───────────────────────── Harness controls ─────────────────────────
-
-async function postAction(path) {
-  const status = $('control-status');
-  setStatus(status, 'working…');
-  try {
-    const r = await fetch(path, { method: 'POST' });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const j = await r.json();
-    if (j.config) currentConfig = j.config;
-    renderStatus();
-    setStatus(status, 'done ✓', 'ok', 2000);
-    return j;
-  } catch (e) {
-    setStatus(status, `error: ${e.message}`, 'err');
-    throw e;
-  }
-}
-
-async function runHeartbeatNow() {
-  const ctrlStatus = $('control-status');
-  heartbeatInFlight = true;
-  renderStatus();
-  setStatus(ctrlStatus, 'triggering heartbeat… (agent is posting, dry-run forced off)');
-  try {
-    // Force-post path: dry-run off, behaviors.post on, 1-post cap. Bypasses
-    // saved config for this single invocation. See loop.ts/postNow.
-    const j = await fetch('/api/post-now', { method: 'POST' }).then((r) => r.json());
-    if (j.config) currentConfig = j.config;
-    setStatus(ctrlStatus, `heartbeat: ${j.summary ?? 'done'}`, 'ok', 8000);
-    await loadLog({ force: true });
-    await fetchAgentSummary();
-  } catch (e) {
-    setStatus(ctrlStatus, `error: ${e.message}`, 'err');
-  } finally {
-    heartbeatInFlight = false;
-    renderStatus();
-  }
-}
-
-async function loadLog({ force = false } = {}) {
-  const el = $('log');
-  if (!el) return;
-  const r = await fetch('/api/log?limit=200');
-  const j = await r.json();
-  const pinnedToBottom = force || el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-  if (!j.log.length) {
-    el.textContent = '(no activity yet)';
-    return;
-  }
-  el.innerHTML = j.log
-    .map((e) => {
-      const ts = new Date(e.ts).toLocaleTimeString();
-      const cls = e.level === 'error' ? 'error' : e.level === 'warn' ? 'warn' : 'info';
-      return `<span class="ts">${ts}</span> <span class="${cls}">${escapeHtml(e.msg)}</span>`;
-    })
-    .join('\n');
-  if (pinnedToBottom) el.scrollTop = el.scrollHeight;
 }
 
 // ───────────────────────── Helpers ─────────────────────────
-
-let toastTimer = null;
-function toast(msg, kind = '') {
-  const el = $('toast');
-  if (!el) return;
-  el.textContent = msg;
-  el.className = 'toast show' + (kind ? ` ${kind}` : '');
-  if (toastTimer) clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { el.classList.remove('show'); }, 2200);
-}
 
 function setStatus(el, text, kind = 'muted', autoClearMs = 0) {
   if (!el) return;
@@ -540,28 +385,8 @@ function escapeAttr(s) { return escapeHtml(s); }
 
 // ───────────────────────── Wiring ─────────────────────────
 
-function wireTabs() {
-  document.querySelectorAll('.tab').forEach((tab) => {
-    tab.addEventListener('click', () => {
-      const name = tab.dataset.tab;
-      document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
-      document.querySelectorAll('.tab-panel').forEach((p) => {
-        p.classList.toggle('active', p.dataset.panel === name);
-      });
-      if (name === 'krawler') {
-        fetchAgentSummary();
-      }
-    });
-  });
-}
-
 document.addEventListener('DOMContentLoaded', () => {
-  wireTabs();
-
   $('provider').addEventListener('change', () => {
-    // Rendering the new cred field must NOT wipe any input — rely on the
-    // editMode set + renderCredField's preservation logic. Each provider has
-    // its own saved/masked state so switching just shows the right one.
     renderCredField();
     renderModelSuggestions();
     const suggestions = modelSuggestions[$('provider').value] ?? [];
@@ -569,31 +394,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!current && suggestions[0]) $('model').value = suggestions[0];
   });
 
-  $('btn-save').addEventListener('click', saveHarness);
-  $('btn-start').addEventListener('click', () => postAction('/api/start').catch(() => {}));
-  $('btn-pause').addEventListener('click', () => postAction('/api/pause').catch(() => {}));
-  $('btn-trigger').addEventListener('click', runHeartbeatNow);
-  $('btn-refresh-log').addEventListener('click', () => loadLog({ force: true }));
-  $('btn-claim').addEventListener('click', claimIdentity);
-  // Wire the new Krawler-tab affordances if present (they only render when
-  // the matching DOM exists, so guard with optional chaining).
-  $('btn-disconnect')?.addEventListener('click', disconnectAgent);
-  $('btn-copy-key')?.addEventListener('click', copyKrawlerKey);
+  $('btn-save').addEventListener('click', saveRuntime);
 
-  fetchConfig({ hydrateHarness: true }).then(() => {
-    loadLog({ force: true });
-    fetchAgentSummary();
-  });
+  fetchConfig({ hydrateRuntime: true }).then(fetchIdentity);
 
-  // Status polling — never touches form inputs.
-  setInterval(() => {
-    if (!heartbeatInFlight) void fetchConfig();
-  }, 15000);
-  setInterval(loadLog, 5000);
-  // Agent summary refreshes on a slower cadence, only when the Krawler tab
-  // is active (cheap check — no API call otherwise).
-  setInterval(() => {
-    const krawlerActive = document.querySelector('.tab-panel[data-panel="krawler"]')?.classList.contains('active');
-    if (krawlerActive && !claiming) fetchAgentSummary();
-  }, 30000);
+  setInterval(() => { fetchConfig().catch(() => {}); }, 15000);
+  setInterval(fetchIdentity, 30000);
 });

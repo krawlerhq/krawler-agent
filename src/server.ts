@@ -5,15 +5,10 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { z } from 'zod';
 
-import { PROVIDERS, getActiveCredentials, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
+import { PROVIDERS, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
 import { KrawlerClient } from './krawler.js';
-import { MODEL_SUGGESTIONS, pickIdentity } from './model.js';
-import { pauseAgent, postNow, runHeartbeat, scheduleNext, startAgent } from './loop.js';
-import { gatewayIsRunning, startGateway, stopGateway } from './gateway.js';
-import { listRecentTurns } from './agent/trajectory.js';
-import { countActiveFacts, listActiveFacts } from './user-model/facts.js';
-import { getSkill, listSkills, refreshRegistry } from './skills/registry.js';
-import { seedIfEmpty } from './skills/seed.js';
+import { MODEL_SUGGESTIONS } from './model.js';
+import { startGateway } from './gateway.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,27 +23,23 @@ const updateConfigSchema = z.object({
   krawlerApiKey: z.string().optional(),
   krawlerBaseUrl: z.string().url().optional(),
   cadenceMinutes: z.number().int().min(5).max(24 * 60).optional(),
-  behaviors: z
-    .object({
-      post: z.boolean().optional(),
-      endorse: z.boolean().optional(),
-      follow: z.boolean().optional(),
-    })
-    .optional(),
   dryRun: z.boolean().optional(),
 });
 
+// Local settings server. Scope is intentionally narrow: paste keys, switch
+// provider, toggle dry-run, read who-am-I off krawler.com. Identity claiming,
+// feed, activity, and start/pause all live elsewhere now (krawler.com for
+// identity; the TTY process for lifecycle).
 export async function buildServer() {
   const app = Fastify({
-    // Silence the per-request incoming/completed pair — dashboard polls
-    // /api/config + /api/log every few seconds and that's the entire terminal
-    // contents otherwise. Warn+error still print. The in-app Activity log has
-    // everything a user actually cares about.
     logger: { level: 'warn' },
     disableRequestLogging: true,
+    // Tear idle keep-alive sockets down on close() so Ctrl+C in the CLI is
+    // prompt even if a browser tab is still open pointing at the settings page.
+    forceCloseConnections: true,
   });
 
-  // Serve the dashboard HTML/JS. In dev (tsx), __dirname is src/; in a
+  // Serve the settings HTML/JS. In dev (tsx), __dirname is src/; in a
   // published install it's dist/. Both sit one level above web/.
   const webRoot = resolve(__dirname, '..', 'web');
   await app.register(fastifyStatic, { root: webRoot, prefix: '/', decorateReply: false });
@@ -63,41 +54,14 @@ export async function buildServer() {
       reply.code(400);
       return { error: parsed.error.issues[0]?.message ?? 'invalid body' };
     }
-    // Empty-string keys mean "leave unchanged" — drop them before merging.
     const patch: Record<string, unknown> = { ...parsed.data };
     for (const k of ['anthropicApiKey', 'openaiApiKey', 'googleApiKey', 'openrouterApiKey', 'krawlerApiKey']) {
       if (patch[k] === '') delete patch[k];
     }
     const current = loadConfig();
-    const merged = {
-      ...current,
-      ...patch,
-      behaviors: { ...current.behaviors, ...((patch.behaviors as typeof current.behaviors) ?? {}) },
-    };
+    const merged = { ...current, ...patch };
     saveConfig(merged);
     return { config: redactConfig(loadConfig()) };
-  });
-
-  app.post('/api/start', async () => {
-    startAgent();
-    return { config: redactConfig(loadConfig()) };
-  });
-
-  app.post('/api/pause', async () => {
-    pauseAgent();
-    return { config: redactConfig(loadConfig()) };
-  });
-
-  app.post('/api/heartbeat/trigger', async () => {
-    const r = await runHeartbeat('manual');
-    return { ok: true, summary: r.summary, config: redactConfig(loadConfig()) };
-  });
-
-  // "Post now": forces dry-run off + behaviors.post on + max 1 post for this
-  // single invocation. Saved config is never touched.
-  app.post('/api/post-now', async () => {
-    const r = await postNow();
-    return { ok: true, summary: r.summary, config: redactConfig(loadConfig()) };
   });
 
   app.get('/api/log', async (req) => {
@@ -105,163 +69,27 @@ export async function buildServer() {
     return { log: readActivityLog(limit) };
   });
 
-  // Reboot the scheduler if the user persisted running=true before the
-  // process restarted. When legacyHeartbeat is off this is a no-op.
-  scheduleNext();
-
-  // Start the v1.0 gateway (channel-driven tool loop) unless legacyHeartbeat
-  // is the only driver the user has opted into. The gateway boots channels
-  // that have creds; no creds = nothing to boot.
-  const bootConfig = loadConfig();
-  if (!bootConfig.legacyHeartbeat || Object.values(bootConfig.channels).some((c) => 'botToken' in c && c.botToken)) {
-    startGateway().catch((e) => {
-      // eslint-disable-next-line no-console
-      console.warn('[server] gateway boot failed:', (e as Error).message);
-    });
-  }
-
-  // --- v1.0 dashboard endpoints ---
-  app.get('/api/trajectories', async (req) => {
-    const q = req.query as { limit?: string; since?: string };
-    const limit = Math.max(1, Math.min(500, Number(q.limit) || 50));
-    const sinceMs = q.since ? parseInt(q.since, 10) || 0 : 0;
-    return { turns: listRecentTurns({ limit, sinceMs }) };
-  });
-
-  app.get('/api/user-model', async () => {
-    return { count: countActiveFacts(), facts: listActiveFacts({ limit: 200 }) };
-  });
-
-  app.get('/api/skills', async () => {
-    seedIfEmpty();
-    await refreshRegistry({ embed: false });
-    const skills = listSkills().map((s) => ({
-      id: s.id,
-      version: s.frontmatter.version,
-      status: s.frontmatter.status,
-      description: s.frontmatter.description,
-      runs_total: s.meta.runs_total,
-      avg_outcome_score: s.meta.avg_outcome_score,
-      endorsements: s.frontmatter.reputation.endorsements,
-    }));
-    return { skills, gatewayRunning: gatewayIsRunning() };
-  });
-
-  // --- Krawler account tab ---
-  //
-  // Summary of the Krawler-side identity: /me (handle, display, bio, avatar)
-  // plus a few recent posts from /feed. All authed by the stored kra_live_ key.
-  // Returns 404-ish `{ agent: null }` shapes instead of throwing so the UI can
-  // render an empty-state card without JS error handling.
-  app.get('/api/agent/summary', async () => {
+  // Read-only "who is this key bound to on krawler.com" passthrough. Surfaces
+  // handle + display name + placeholder flag so the settings page can show a
+  // truthful identity header instead of duplicating state locally.
+  app.get('/api/me', async () => {
     const config = loadConfig();
     if (!config.krawlerApiKey) {
-      return { agent: null, recentPosts: [], placeholderHandle: false, reason: 'no-key' };
+      return { agent: null, placeholderHandle: false, reason: 'no-key' };
     }
     const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
     try {
       const { agent } = await client.me();
       const placeholderHandle = /^agent-[0-9a-f]{8}$/.test(agent.handle);
-      let recentPosts: unknown[] = [];
-      try {
-        const r = await client.feed();
-        // Trim to the author's own posts — that's what "your recent activity"
-        // should mean on the account tab. Others' posts belong elsewhere.
-        recentPosts = r.posts.filter((p) => p.author.handle === agent.handle).slice(0, 10);
-      } catch {
-        /* feed unreachable is non-fatal here */
-      }
-      return { agent, recentPosts, placeholderHandle, reason: null };
+      return { agent, placeholderHandle, reason: null };
     } catch (e) {
-      return { agent: null, recentPosts: [], placeholderHandle: false, reason: (e as Error).message };
+      return { agent: null, placeholderHandle: false, reason: (e as Error).message };
     }
   });
 
-  // Claim a real identity for the Krawler agent this key represents. Loads the
-  // krawler-claim-identity skill body, asks the configured model to pick
-  // handle/displayName/bio/avatar, and PATCHes /me.
-  //
-  // Safety: by default this only runs when /me returns a placeholder handle
-  // (agent-xxxxxxxx) — same guard as the auto-claim path in loop.ts. That
-  // prevents a stray call (stale tab, double-click) from wiping an identity
-  // the agent has already claimed. To intentionally re-pick, POST with
-  // `{ force: true }`.
-  app.post('/api/agent/claim-identity', async (req, reply) => {
-    const body = (req.body ?? {}) as { force?: boolean };
-    const force = body.force === true;
-
-    const config = loadConfig();
-    const creds = getActiveCredentials(config);
-    const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
-    if (!hasModelCreds) {
-      reply.code(400);
-      return { error: `missing ${config.provider} credentials — add a key on the Harness tab first.` };
-    }
-    if (!config.krawlerApiKey) {
-      reply.code(400);
-      return { error: 'missing krawlerApiKey — paste one from krawler.com/dashboard first.' };
-    }
-
-    const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
-
-    // Guard: only claim over a placeholder handle unless the caller forced it.
-    // /me is cheap; the round-trip is worth the safety.
-    try {
-      const { agent: current } = await client.me();
-      const isPlaceholder = /^agent-[0-9a-f]{8}$/.test(current.handle);
-      if (!isPlaceholder && !force) {
-        reply.code(409);
-        return {
-          error: `agent already has a claimed identity (@${current.handle}). Pass { "force": true } to re-pick.`,
-          agent: current,
-        };
-      }
-    } catch (e) {
-      reply.code(502);
-      return { error: `could not verify current identity: ${(e as Error).message}` };
-    }
-
-    // Fetch the Krawler canonical docs so the model has the same context the
-    // heartbeat loop uses when auto-claiming.
-    const skillUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/skill.md';
-    const heartbeatUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/heartbeat.md';
-    async function fetchDoc(url: string): Promise<string> {
-      try {
-        const r = await fetch(url, { headers: { Accept: 'text/markdown,text/plain,*/*' } });
-        return r.ok ? await r.text() : '';
-      } catch {
-        return '';
-      }
-    }
-    const [skillMd, heartbeatMd] = await Promise.all([fetchDoc(skillUrl), fetchDoc(heartbeatUrl)]);
-
-    seedIfEmpty();
-    await refreshRegistry({ embed: false });
-    const claimSkillBody = getSkill('krawler-claim-identity')?.body;
-
-    try {
-      const identity = await pickIdentity({
-        provider: config.provider,
-        model: config.model,
-        apiKey: creds.apiKey,
-        ollamaBaseUrl: creds.baseUrl,
-        skillMd,
-        heartbeatMd,
-        claimSkillBody,
-      });
-      const { agent } = await client.updateMe(identity);
-      return { agent, identity };
-    } catch (e) {
-      reply.code(500);
-      return { error: (e as Error).message };
-    }
-  });
-
-  // Return the full Krawler agent key over the loopback so the dashboard can
-  // copy it to the clipboard for use in other harnesses (OpenClaw, Hermes,
-  // your own). The dashboard binds 127.0.0.1 by default and config.json is
-  // 0600, so the trust boundary is already crossed; surfacing it as a
-  // dedicated endpoint keeps redactConfig's masking strict everywhere else.
+  // Reveal the stored key over the loopback so the settings page can copy it
+  // for use in other harnesses (OpenClaw, Hermes, your own). 127.0.0.1 + 0600
+  // config file means the trust boundary is already crossed.
   app.get('/api/agent/reveal-key', async (_req, reply) => {
     const config = loadConfig();
     if (!config.krawlerApiKey) {
@@ -271,14 +99,24 @@ export async function buildServer() {
     return { key: config.krawlerApiKey };
   });
 
-  // Disconnect the local install from the Krawler agent. Clears the key in
-  // config.json only; the agent record on krawler.com is untouched and the
-  // user can paste the same key (or a rotated one) again at any time.
+  // Disconnect the local install from the Krawler agent. Clears the key
+  // locally; the agent on krawler.com is untouched.
   app.delete('/api/agent', async () => {
     const config = loadConfig();
     saveConfig({ ...config, krawlerApiKey: '' });
     return { config: redactConfig(loadConfig()) };
   });
+
+  // Start the v1.0 gateway (channel-driven tool loop) when a channel has creds.
+  // The legacy cadenced loop is owned by the CLI process directly (see cli.ts);
+  // this stays here because the gateway's lifetime is already server-scoped.
+  const bootConfig = loadConfig();
+  if (!bootConfig.legacyHeartbeat || Object.values(bootConfig.channels).some((c) => 'botToken' in c && c.botToken)) {
+    startGateway().catch((e) => {
+      // eslint-disable-next-line no-console
+      console.warn('[server] gateway boot failed:', (e as Error).message);
+    });
+  }
 
   return app;
 }
