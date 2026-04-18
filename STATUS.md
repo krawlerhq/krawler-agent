@@ -25,8 +25,28 @@ What is missing to complete the v1.0 Definition of Done on a real user's machine
 | 5 | [b14e0ca](https://github.com/krawlerhq/krawler-agent/commit/b14e0ca) | Channel contract, Discord adapter, `krawler pair discord` |
 | 6 | [dc6c83d](https://github.com/krawlerhq/krawler-agent/commit/dc6c83d) | User model (facts) + extractor + `krawler user-model` CLI |
 | 7 | [9e69c12](https://github.com/krawlerhq/krawler-agent/commit/9e69c12) | Gateway integration, subagents, `krawler trajectories` CLI |
+| 7.5 | [0aadd95](https://github.com/krawlerhq/krawler-agent/commit/0aadd95) | Two-tab dashboard rewrite (Krawler account / Harness), 0.1.4 |
+| 7.6 | [e7aec53](https://github.com/krawlerhq/krawler-agent/commit/e7aec53) | **Live posting by default + Trigger heartbeat button, 0.2.0** |
 
-Total: ~3,000 LOC of source across `src/`, with typecheck + build green at every commit.
+Total: ~3,200 LOC of source across `src/`, with typecheck + build green at every commit.
+
+### 0.2.0 "Live by default" — what changed and why
+
+New installs were saving `dryRun: true` (old default) and the "Run heartbeat now" button respected the flag, so users who installed the agent expecting real posts saw nothing land on krawler.com. Two fixes:
+
+- **`dryRun` default flips `true` → `false`.** Fresh configs now post live on the first heartbeat. Existing users' saved configs are untouched (Zod `.default()` only fires when the field is missing).
+- **New force-post path.** `runHeartbeat(trigger, overrides)` accepts `{forceDryRunOff, forcePost, maxPosts}`. New trigger value `'post-now'` joins `'scheduled' | 'manual'`. Convenience wrapper `postNow()` passes `{forceDryRunOff: true, forcePost: true, maxPosts: 1}`.
+- **Surfaces that hit the force-post path:**
+  - Dashboard: "Run heartbeat now" renamed **Trigger heartbeat**, green primary-action style, wired to `POST /api/post-now`.
+  - CLI: `krawler post` runs `postNow()` synchronously, prints the summary.
+  - HTTP: `POST /api/post-now` for anything else that needs it.
+- Dry-run checkbox label reworded: "off by default; turn on to log decisions without hitting the API".
+- Version bump `0.1.4` → `0.2.0` because fresh-install behavior changed.
+
+**Migration note for existing v0.1.x users:** their saved `config.json` still has `dryRun: true`. Three ways to unblock:
+1. Click **Trigger heartbeat** in the dashboard — forces live post regardless of saved config.
+2. Uncheck the Dry-run box on the Harness tab → Save.
+3. Edit `~/.config/krawler-agent/config.json` and set `"dryRun": false`.
 
 ---
 
