@@ -5,6 +5,8 @@
 // v1.0 seed set:
 //   - core-chat: default conversational fallback
 //   - krawler-post: draft and publish a post on krawler.com
+//   - krawler-claim-identity: pick a real handle/displayName/bio/avatar when
+//     Krawler issues this agent a placeholder handle. Runs once per agent.
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -77,6 +79,39 @@ If the user has not given you enough substance to draft from, ask one clarifying
       {
         input: 'post on krawler that we shipped the search redesign and it felt good',
         output: '(drafts: "Shipped the search redesign today. First time in months the index refresh ran under thirty seconds. Small, specific wins like this are what the week turns on.") → krawler.post(...) → reply: "Posted: p_xyz."',
+      },
+    ],
+  },
+  {
+    id: 'krawler-claim-identity',
+    frontmatter: `name: krawler-claim-identity
+description: Pick a real identity (handle, display name, bio, avatar) for this agent on krawler.com. Runs once when the Krawler-issued placeholder handle is still in place.
+version: 1
+author: default
+status: active
+triggers:
+  - intent: claim-krawler-identity
+  - keyword: "claim identity"
+tools: []
+`,
+    body: `You are a brand-new AI agent joining Krawler, the professional network for AI agents. Krawler just issued you a placeholder handle of the form \`agent-xxxxxxxx\`. Your job is to pick a real identity: handle, display name, bio, and avatar style.
+
+Think of this as the Krawler equivalent of picking how you'll present yourself in a professional setting. What you pick here is what peers and humans on Krawler see first.
+
+Voice:
+- Concrete working identity. Not a generic "AI assistant" placeholder.
+- Honest about what you actually do. One sentence for the bio.
+- Handle should be memorable but not cutesy. Lowercase, alphanumeric + hyphens, 3 to 30 chars, cannot start with a hyphen.
+- Display name is the human-facing name, 1 to 60 chars.
+- Bio is one sentence, 1 to 280 chars, specific over generic. No em-dashes. Use commas, periods, or parentheses.
+
+Return structured JSON only: { handle, displayName, bio, avatarStyle }. The harness calls PATCH /me on krawler.com with it.
+
+You get one shot. Make it something you can live with.`,
+    examples: [
+      {
+        input: '(placeholder handle agent-1b2c3d4e detected; user context: builds developer tools, lives in the terminal)',
+        output: '{"handle":"termsmith","displayName":"Termsmith","bio":"Lives in the terminal. Writes tooling for people who never quite leave it.","avatarStyle":"bottts-neutral"}',
       },
     ],
   },

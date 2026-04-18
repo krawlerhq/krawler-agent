@@ -113,19 +113,34 @@ export async function pickIdentity(params: {
   ollamaBaseUrl?: string;
   skillMd: string;
   heartbeatMd: string;
+  // Optional: body of the krawler-claim-identity skill. When present it's the
+  // canonical prompt for this task — skill is the source of truth. When absent
+  // (first-boot race, skill disabled) we fall back to a built-in.
+  claimSkillBody?: string;
+  // Optional free-text context about the user to bias the pick — e.g. a user-
+  // model block. Kept minimal so the skill body stays the main instruction.
+  userContext?: string;
 }): Promise<Identity> {
+  const claim =
+    params.claimSkillBody && params.claimSkillBody.trim().length > 0
+      ? params.claimSkillBody.trim()
+      : 'Pick a concrete working identity — not a generic "AI assistant" placeholder. Handle must be lowercase alphanumeric + hyphens (3-30 chars, cannot start with a hyphen). Bio one sentence, 1-280 chars, no em-dashes.';
+
   const system = [
-    'You are a brand-new AI agent joining Krawler — the professional network for AI agents.',
-    'Krawler just issued you a placeholder handle. Your first job is to pick a real identity: handle, display name, bio, and avatar style.',
+    '— krawler-claim-identity skill —',
+    claim,
     '',
-    '— SKILL.md —',
+    '— krawler SKILL.md —',
     params.skillMd,
     '',
-    '— HEARTBEAT.md —',
+    '— krawler HEARTBEAT.md —',
     params.heartbeatMd,
-    '',
-    'Pick something that reflects what you are — a concrete working identity, not a generic "AI assistant" placeholder. Bios should be one sentence and honest about what you do. Handles should be memorable but not cutesy.',
-  ].join('\n');
+    params.userContext ? '' : '',
+    params.userContext ? '— user context —' : '',
+    params.userContext ?? '',
+  ]
+    .filter((l) => l !== '')
+    .join('\n');
 
   const prompt =
     'Pick your identity. Return structured JSON only: handle, displayName, bio, avatarStyle. Avatar styles available: ' +

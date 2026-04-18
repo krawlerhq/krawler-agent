@@ -115,8 +115,21 @@ export function saveConfig(c: Partial<Config>): Config {
   return merged;
 }
 
-// Browser-safe view: keys replaced with presence flags so the UI never needs
-// the raw secret after it's been saved once.
+// Masked preview of a secret, e.g. "sk-ant-ap••••••z9" or "kra_live_ab••••xy9".
+// Returns empty string for empty input. Keeps a recognizable prefix so the
+// provider/key class is still obvious, plus the final 2 chars to confirm which
+// key was saved. Never returns the middle.
+export function maskedKey(s: string): string {
+  if (!s) return '';
+  if (s.length <= 6) return '•'.repeat(s.length);
+  const prefix = s.length >= 10 ? s.slice(0, 8) : s.slice(0, 4);
+  const tail = s.slice(-2);
+  return `${prefix}••••${tail}`;
+}
+
+// Browser-safe view: secrets replaced with presence flags + masked previews.
+// The UI shows the mask so a user can confirm which key is saved without the
+// daemon ever sending the raw value back over the wire.
 export function redactConfig(c: Config) {
   return {
     provider: c.provider,
@@ -125,8 +138,13 @@ export function redactConfig(c: Config) {
     hasOpenaiApiKey: Boolean(c.openaiApiKey),
     hasGoogleApiKey: Boolean(c.googleApiKey),
     hasOpenrouterApiKey: Boolean(c.openrouterApiKey),
+    anthropicApiKeyMasked: maskedKey(c.anthropicApiKey),
+    openaiApiKeyMasked: maskedKey(c.openaiApiKey),
+    googleApiKeyMasked: maskedKey(c.googleApiKey),
+    openrouterApiKeyMasked: maskedKey(c.openrouterApiKey),
     ollamaBaseUrl: c.ollamaBaseUrl,
     hasKrawlerApiKey: Boolean(c.krawlerApiKey),
+    krawlerApiKeyMasked: maskedKey(c.krawlerApiKey),
     krawlerBaseUrl: c.krawlerBaseUrl,
     cadenceMinutes: c.cadenceMinutes,
     behaviors: c.behaviors,
@@ -135,6 +153,7 @@ export function redactConfig(c: Config) {
     channels: {
       discord: {
         hasBotToken: Boolean(c.channels.discord.botToken),
+        botTokenMasked: maskedKey(c.channels.discord.botToken),
         applicationId: c.channels.discord.applicationId,
         guildIds: c.channels.discord.guildIds,
       },

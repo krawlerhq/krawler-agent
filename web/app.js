@@ -1,47 +1,57 @@
-// Dashboard JS. Talks to the Fastify backend at /api/*.
+// Dashboard JS. Two tabs: Krawler account (identity-side, any-harness-compatible)
+// and Harness (provider/model/schedule for this specific harness).
+//
+// Key rules (hard-learned):
+//   - Never wipe a form input on save or on provider change. Ever.
+//   - Secrets get a reveal toggle (password/text) AND a masked preview after save.
+//   - Polling updates badges/masks/status only. Never touches inputs the user might be editing.
 
 const $ = (id) => document.getElementById(id);
 
-// Per-provider field definition. Each entry describes the credential input
-// shown below the model dropdown when that provider is active.
+// Per-provider credential field definition.
 const PROVIDER_FIELDS = {
   anthropic: {
     label: 'Anthropic API key',
     stateKey: 'hasAnthropicApiKey',
+    maskedKey: 'anthropicApiKeyMasked',
     patchKey: 'anthropicApiKey',
-    inputType: 'password',
+    secret: true,
     placeholder: 'sk-ant-…',
     hint: 'Stored in <code>~/.config/krawler-agent/config.json</code> (0600). Only sent to api.anthropic.com.',
   },
   openai: {
     label: 'OpenAI API key',
     stateKey: 'hasOpenaiApiKey',
+    maskedKey: 'openaiApiKeyMasked',
     patchKey: 'openaiApiKey',
-    inputType: 'password',
+    secret: true,
     placeholder: 'sk-…',
     hint: 'Stored in <code>~/.config/krawler-agent/config.json</code> (0600). Only sent to api.openai.com.',
   },
   google: {
     label: 'Google AI API key',
     stateKey: 'hasGoogleApiKey',
+    maskedKey: 'googleApiKeyMasked',
     patchKey: 'googleApiKey',
-    inputType: 'password',
+    secret: true,
     placeholder: 'AIza…',
     hint: 'Get one at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.',
   },
   openrouter: {
     label: 'OpenRouter API key',
     stateKey: 'hasOpenrouterApiKey',
+    maskedKey: 'openrouterApiKeyMasked',
     patchKey: 'openrouterApiKey',
-    inputType: 'password',
+    secret: true,
     placeholder: 'sk-or-…',
     hint: 'One key, many models. Model names look like <code>anthropic/claude-opus-4-7</code>.',
   },
   ollama: {
     label: 'Ollama base URL',
     stateKey: null,
+    maskedKey: null,
     patchKey: 'ollamaBaseUrl',
-    inputType: 'url',
+    secret: false,
     placeholder: 'http://localhost:11434',
     hint: 'Runs models locally. No API key required. <a href="https://ollama.com" target="_blank">ollama.com</a>.',
   },
@@ -49,30 +59,30 @@ const PROVIDER_FIELDS = {
 
 let currentConfig = null;
 let modelSuggestions = {};
-// Set to true once the form has been populated from initial config. After
-// that, polling only updates STATUS fields (running, last heartbeat, "set"
-// badges) and never the form inputs — so user input isn't clobbered.
-let formHydrated = false;
-// When a heartbeat is in flight, pause config polls so they don't clobber
-// anything mid-operation.
+let harnessFormHydrated = false;
 let heartbeatInFlight = false;
+let claiming = false;
+// Tracks which provider-cred inputs the user has elected to edit (replaces the
+// masked preview with a real input). Keyed by PROVIDER_FIELDS key, plus 'krawler'.
+const editMode = new Set();
 
-async function fetchConfig({ hydrateForm } = { hydrateForm: false }) {
+// ───────────────────────── Config ─────────────────────────
+
+async function fetchConfig({ hydrateHarness } = { hydrateHarness: false }) {
   const r = await fetch('/api/config');
   const j = await r.json();
   currentConfig = j.config;
   modelSuggestions = j.modelSuggestions ?? {};
-  if (hydrateForm && !formHydrated) {
-    hydrateFormFromConfig();
-    formHydrated = true;
+  if (hydrateHarness && !harnessFormHydrated) {
+    hydrateHarnessFromConfig();
+    harnessFormHydrated = true;
   }
   renderStatus();
-  renderKeyBadges();
+  renderCredField();
+  renderKrawlerKeyField();
 }
 
-function hydrateFormFromConfig() {
-  // One-shot population of form inputs from config. Never called again —
-  // subsequent polls only touch non-form UI. User's live edits survive.
+function hydrateHarnessFromConfig() {
   $('provider').value = currentConfig.provider;
   $('model').value = currentConfig.model ?? '';
   $('cadence').value = String(currentConfig.cadenceMinutes);
@@ -80,12 +90,12 @@ function hydrateFormFromConfig() {
   $('b-endorse').checked = currentConfig.behaviors.endorse;
   $('b-follow').checked = currentConfig.behaviors.follow;
   $('dry-run').checked = currentConfig.dryRun;
-  renderCredField({ preserveInput: false });
   renderModelSuggestions();
 }
 
 function renderStatus() {
   const pill = $('status-pill');
+  if (!pill) return;
   if (!currentConfig) {
     pill.textContent = 'loading…';
     pill.className = 'pill muted';
@@ -106,45 +116,127 @@ function renderStatus() {
     : 'last heartbeat: —';
 }
 
-function renderKeyBadges() {
-  // Update the "(set)" / "(not set)" badges without touching input values.
-  if (!currentConfig) return;
-  $('krawler-status').textContent = currentConfig.hasKrawlerApiKey ? '(set)' : '(not set)';
-  const credStatus = $('cred-status');
-  if (credStatus) {
-    const provider = $('provider').value;
-    const def = PROVIDER_FIELDS[provider];
-    if (def && def.stateKey) {
-      credStatus.textContent = currentConfig[def.stateKey] ? '(set)' : '(not set)';
-    } else {
-      credStatus.textContent = '';
-    }
-  }
-}
+// ───────────────────────── Key fields (both tabs) ─────────────────────────
 
-function renderCredField({ preserveInput = true } = {}) {
+function renderCredField() {
+  if (!currentConfig) return;
   const provider = $('provider').value;
   const def = PROVIDER_FIELDS[provider];
-  const hasKey = def.stateKey && currentConfig ? currentConfig[def.stateKey] : false;
-  const existing = preserveInput ? ($('cred-input')?.value ?? '') : '';
-  const initialValue =
-    existing ||
-    (provider === 'ollama' && currentConfig ? currentConfig.ollamaBaseUrl : '');
-  $('cred-field').innerHTML = `
-    <label>${def.label} <small id="cred-status">${def.stateKey ? (hasKey ? '(set)' : '(not set)') : ''}</small></label>
-    <input id="cred-input" type="${def.inputType}" placeholder="${def.placeholder}" value="${escapeHtml(initialValue)}" autocomplete="off" spellcheck="false" />
+  const host = $('cred-field');
+
+  // Non-secret (Ollama base URL): always an editable input, seeded from config once.
+  if (!def.secret) {
+    // Preserve whatever the user has typed; only seed when there's no input yet.
+    const existing = $('cred-input');
+    const seed = existing ? existing.value : currentConfig.ollamaBaseUrl ?? '';
+    host.innerHTML = `
+      <label>${def.label}</label>
+      <input id="cred-input" type="url" placeholder="${def.placeholder}" value="${escapeAttr(seed)}" autocomplete="off" spellcheck="false" />
+      <div class="hint">${def.hint}</div>
+    `;
+    return;
+  }
+
+  const hasKey = currentConfig[def.stateKey];
+  const masked = currentConfig[def.maskedKey] ?? '';
+  const editing = editMode.has(provider);
+
+  // Secret already saved AND user hasn't asked to edit → show masked preview only.
+  if (hasKey && !editing) {
+    host.innerHTML = `
+      <label>${def.label} <small class="muted ok">(saved)</small></label>
+      <div class="masked-preview">
+        <span>${escapeHtml(masked)}</span>
+        <button type="button" class="edit-btn" data-cred-edit="${provider}">Replace</button>
+      </div>
+      <div class="hint">${def.hint}</div>
+    `;
+    host.querySelector('[data-cred-edit]').addEventListener('click', () => {
+      editMode.add(provider);
+      renderCredField();
+      // Focus the new input so the paste can happen immediately.
+      requestAnimationFrame(() => $('cred-input')?.focus());
+    });
+    return;
+  }
+
+  // Otherwise: editable input. Preserve whatever they've typed across re-renders.
+  const existing = $('cred-input');
+  const existingValue = existing ? existing.value : '';
+  host.innerHTML = `
+    <label>${def.label} <small class="muted">${hasKey ? '(replacing saved key)' : '(not set)'}</small></label>
+    <div class="key-input">
+      <input id="cred-input" type="password" placeholder="${def.placeholder}" value="${escapeAttr(existingValue)}" autocomplete="off" spellcheck="false" />
+      <button type="button" class="reveal" data-cred-toggle>Show</button>
+    </div>
     <div class="hint">${def.hint}</div>
   `;
+  wireRevealToggle(host.querySelector('[data-cred-toggle]'), $('cred-input'));
+}
+
+function renderKrawlerKeyField() {
+  if (!currentConfig) return;
+  const host = $('krawler-key-wrap');
+  const hasKey = currentConfig.hasKrawlerApiKey;
+  const masked = currentConfig.krawlerApiKeyMasked ?? '';
+  const editing = editMode.has('krawler');
+
+  if (hasKey && !editing) {
+    host.innerHTML = `
+      <label>Agent key <small class="muted ok">(saved)</small></label>
+      <div class="masked-preview">
+        <span>${escapeHtml(masked)}</span>
+        <button type="button" class="edit-btn" data-krawler-edit>Replace</button>
+      </div>
+    `;
+    host.querySelector('[data-krawler-edit]').addEventListener('click', () => {
+      editMode.add('krawler');
+      renderKrawlerKeyField();
+      requestAnimationFrame(() => $('krawler-input')?.focus());
+    });
+    return;
+  }
+
+  const existing = $('krawler-input');
+  const existingValue = existing ? existing.value : '';
+  host.innerHTML = `
+    <label>Agent key <small class="muted">${hasKey ? '(replacing)' : '(not set)'}</small></label>
+    <div class="key-input">
+      <input id="krawler-input" type="password" placeholder="kra_live_…" value="${escapeAttr(existingValue)}" autocomplete="off" spellcheck="false" />
+      <button type="button" class="reveal" data-krawler-toggle>Show</button>
+    </div>
+    <div class="row" style="margin-top: 8px;">
+      <button id="btn-save-krawler">Save key</button>
+      <span id="krawler-save-status" class="muted"></span>
+    </div>
+  `;
+  wireRevealToggle(host.querySelector('[data-krawler-toggle]'), $('krawler-input'));
+  $('btn-save-krawler').addEventListener('click', saveKrawlerKey);
+}
+
+function wireRevealToggle(btn, input) {
+  if (!btn || !input) return;
+  btn.addEventListener('click', () => {
+    if (input.type === 'password') {
+      input.type = 'text';
+      btn.textContent = 'Hide';
+    } else {
+      input.type = 'password';
+      btn.textContent = 'Show';
+    }
+  });
 }
 
 function renderModelSuggestions() {
   const provider = $('provider').value;
   const dl = $('model-suggestions');
   const list = modelSuggestions[provider] ?? [];
-  dl.innerHTML = list.map((m) => `<option value="${escapeHtml(m)}"></option>`).join('');
+  dl.innerHTML = list.map((m) => `<option value="${escapeAttr(m)}"></option>`).join('');
 }
 
-function collectPatch() {
+// ───────────────────────── Save actions ─────────────────────────
+
+function collectHarnessPatch() {
   const provider = $('provider').value;
   const patch = {
     provider,
@@ -157,16 +249,211 @@ function collectPatch() {
     },
     dryRun: $('dry-run').checked,
   };
-
   const def = PROVIDER_FIELDS[provider];
-  const credVal = $('cred-input')?.value ?? '';
-  if (credVal) patch[def.patchKey] = credVal;
-
-  const kra = $('krawler-key').value;
-  if (kra) patch.krawlerApiKey = kra;
-
+  const credEl = $('cred-input');
+  if (credEl) {
+    const credVal = credEl.value;
+    if (credVal) patch[def.patchKey] = credVal;
+  }
   return patch;
 }
+
+async function saveHarness() {
+  const status = $('save-status');
+  setStatus(status, 'saving…');
+  try {
+    const patch = collectHarnessPatch();
+    const r = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+    const j = await r.json();
+    currentConfig = j.config;
+    // Saved credentials: drop back to masked preview (user doesn't need to see
+    // the raw value again). User-facing inputs (model, cadence, etc.) we leave alone.
+    const provider = $('provider').value;
+    const def = PROVIDER_FIELDS[provider];
+    if (def.secret && currentConfig[def.stateKey]) {
+      editMode.delete(provider);
+    }
+    renderStatus();
+    renderCredField();
+    setStatus(status, 'saved ✓', 'ok', 2000);
+  } catch (e) {
+    setStatus(status, `error: ${e.message}`, 'err');
+  }
+}
+
+async function saveKrawlerKey() {
+  const status = $('krawler-save-status');
+  const val = $('krawler-input')?.value ?? '';
+  if (!val) {
+    setStatus(status, 'paste a key first', 'warn', 2000);
+    return;
+  }
+  setStatus(status, 'saving…');
+  try {
+    const r = await fetch('/api/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ krawlerApiKey: val }),
+    });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+    const j = await r.json();
+    currentConfig = j.config;
+    editMode.delete('krawler');
+    renderKrawlerKeyField();
+    await fetchAgentSummary();
+  } catch (e) {
+    setStatus(status, `error: ${e.message}`, 'err');
+  }
+}
+
+// ───────────────────────── Agent summary (Krawler tab) ─────────────────────────
+
+let lastAgentSummary = null;
+
+async function fetchAgentSummary() {
+  try {
+    const r = await fetch('/api/agent/summary');
+    const j = await r.json();
+    lastAgentSummary = j;
+    renderAgentSummary(j);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn('agent summary failed', e);
+  }
+}
+
+function renderAgentSummary(s) {
+  const cardWrap = $('agent-card-wrap');
+  const claimWrap = $('claim-wrap');
+  const postsWrap = $('posts-wrap');
+
+  if (!s.agent) {
+    cardWrap.style.display = 'none';
+    claimWrap.style.display = 'none';
+    postsWrap.style.display = 'none';
+    return;
+  }
+
+  const a = s.agent;
+  const avatarUrl = `https://api.dicebear.com/9.x/${encodeURIComponent(a.avatarStyle || 'bottts')}/svg?seed=${encodeURIComponent(a.handle)}`;
+  $('agent-card').innerHTML = `
+    <div class="agent-card">
+      <img class="agent-avatar" src="${avatarUrl}" alt="@${escapeAttr(a.handle)}" />
+      <div class="agent-meta">
+        <div class="handle">@${escapeHtml(a.handle)}</div>
+        <div class="display">${escapeHtml(a.displayName || '')}</div>
+        <div class="bio">${escapeHtml(a.bio || '')}</div>
+      </div>
+    </div>
+  `;
+  cardWrap.style.display = 'block';
+
+  claimWrap.style.display = s.placeholderHandle ? 'block' : 'none';
+
+  if (s.recentPosts && s.recentPosts.length) {
+    $('agent-posts').innerHTML = s.recentPosts
+      .map(
+        (p) => `
+        <div class="post">
+          <div class="body">${escapeHtml(p.body)}</div>
+          <div class="meta">${new Date(p.createdAt).toLocaleString()} · ${(p.commentCount ?? 0)} comments</div>
+        </div>
+      `,
+      )
+      .join('');
+    postsWrap.style.display = 'block';
+  } else {
+    $('agent-posts').innerHTML = '<div class="empty"><p>Nothing posted yet.</p><p>Run a heartbeat from the Harness tab to generate activity.</p></div>';
+    postsWrap.style.display = 'block';
+  }
+}
+
+async function claimIdentity({ force = false } = {}) {
+  if (claiming) return;
+  claiming = true;
+  const status = $('claim-status');
+  setStatus(status, 'picking identity…');
+  try {
+    const r = await fetch('/api/agent/claim-identity', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error ?? `HTTP ${r.status}`);
+    setStatus(status, `claimed @${j.agent.handle}`, 'ok', 4000);
+    await fetchAgentSummary();
+  } catch (e) {
+    setStatus(status, `error: ${e.message}`, 'err');
+  } finally {
+    claiming = false;
+  }
+}
+
+// ───────────────────────── Harness controls ─────────────────────────
+
+async function postAction(path) {
+  const status = $('control-status');
+  setStatus(status, 'working…');
+  try {
+    const r = await fetch(path, { method: 'POST' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.config) currentConfig = j.config;
+    renderStatus();
+    setStatus(status, 'done ✓', 'ok', 2000);
+    return j;
+  } catch (e) {
+    setStatus(status, `error: ${e.message}`, 'err');
+    throw e;
+  }
+}
+
+async function runHeartbeatNow() {
+  const ctrlStatus = $('control-status');
+  heartbeatInFlight = true;
+  renderStatus();
+  setStatus(ctrlStatus, 'heartbeating… (model call in progress)');
+  try {
+    const j = await fetch('/api/heartbeat/trigger', { method: 'POST' }).then((r) => r.json());
+    if (j.config) currentConfig = j.config;
+    setStatus(ctrlStatus, `heartbeat: ${j.summary ?? 'done'}`, 'ok', 6000);
+    await loadLog({ force: true });
+    await fetchAgentSummary();
+  } catch (e) {
+    setStatus(ctrlStatus, `error: ${e.message}`, 'err');
+  } finally {
+    heartbeatInFlight = false;
+    renderStatus();
+  }
+}
+
+async function loadLog({ force = false } = {}) {
+  const el = $('log');
+  if (!el) return;
+  const r = await fetch('/api/log?limit=200');
+  const j = await r.json();
+  const pinnedToBottom = force || el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  if (!j.log.length) {
+    el.textContent = '(no activity yet)';
+    return;
+  }
+  el.innerHTML = j.log
+    .map((e) => {
+      const ts = new Date(e.ts).toLocaleTimeString();
+      const cls = e.level === 'error' ? 'error' : e.level === 'warn' ? 'warn' : 'info';
+      return `<span class="ts">${ts}</span> <span class="${cls}">${escapeHtml(e.msg)}</span>`;
+    })
+    .join('\n');
+  if (pinnedToBottom) el.scrollTop = el.scrollHeight;
+}
+
+// ───────────────────────── Helpers ─────────────────────────
 
 function setStatus(el, text, kind = 'muted', autoClearMs = 0) {
   if (!el) return;
@@ -182,121 +469,64 @@ function setStatus(el, text, kind = 'muted', autoClearMs = 0) {
   }
 }
 
-async function save() {
-  const saveStatus = $('save-status');
-  setStatus(saveStatus, 'saving…');
-  try {
-    const r = await fetch('/api/config', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(collectPatch()),
-    });
-    if (!r.ok) {
-      const j = await r.json().catch(() => ({}));
-      throw new Error(j.error ?? `HTTP ${r.status}`);
-    }
-    const j = await r.json();
-    currentConfig = j.config;
-    // Clear submitted key fields so their cleartext value doesn't linger
-    // in the DOM, and refresh the "(set)" badges.
-    $('krawler-key').value = '';
-    const cred = $('cred-input');
-    if (cred && cred.type === 'password') cred.value = '';
-    renderStatus();
-    renderKeyBadges();
-    setStatus(saveStatus, 'saved ✓', 'ok', 2000);
-  } catch (e) {
-    setStatus(saveStatus, `error: ${e.message}`, 'err');
-  }
-}
-
-async function postAction(path, controlStatusEl) {
-  setStatus(controlStatusEl, 'working…');
-  try {
-    const r = await fetch(path, { method: 'POST' });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const j = await r.json();
-    if (j.config) currentConfig = j.config;
-    renderStatus();
-    renderKeyBadges();
-    setStatus(controlStatusEl, 'done ✓', 'ok', 2000);
-    return j;
-  } catch (e) {
-    setStatus(controlStatusEl, `error: ${e.message}`, 'err');
-    throw e;
-  }
-}
-
-async function runHeartbeatNow() {
-  const ctrlStatus = $('control-status');
-  heartbeatInFlight = true;
-  renderStatus();
-  setStatus(ctrlStatus, 'heartbeating… (model call in progress)');
-  try {
-    const j = await fetch('/api/heartbeat/trigger', { method: 'POST' }).then((r) => r.json());
-    if (j.config) currentConfig = j.config;
-    setStatus(ctrlStatus, `heartbeat: ${j.summary ?? 'done'}`, 'ok', 6000);
-    await loadLog({ force: true });
-  } catch (e) {
-    setStatus(ctrlStatus, `error: ${e.message}`, 'err');
-  } finally {
-    heartbeatInFlight = false;
-    renderStatus();
-    renderKeyBadges();
-  }
-}
-
-async function loadLog({ force = false } = {}) {
-  const r = await fetch('/api/log?limit=200');
-  const j = await r.json();
-  const el = $('log');
-  // Preserve scroll position unless the user is already pinned near the
-  // bottom (or we're forcing a jump after a manual action).
-  const pinnedToBottom =
-    force || el.scrollHeight - el.scrollTop - el.clientHeight < 40;
-
-  if (!j.log.length) {
-    el.textContent = '(no activity yet)';
-    return;
-  }
-  el.innerHTML = j.log
-    .map((e) => {
-      const ts = new Date(e.ts).toLocaleTimeString();
-      const cls = e.level === 'error' ? 'error' : e.level === 'warn' ? 'warn' : 'info';
-      return `<span class="ts">${ts}</span> <span class="${cls}">${escapeHtml(e.msg)}</span>`;
-    })
-    .join('\n');
-
-  if (pinnedToBottom) el.scrollTop = el.scrollHeight;
-}
-
 function escapeHtml(s) {
   if (s == null) return '';
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+function escapeAttr(s) { return escapeHtml(s); }
+
+// ───────────────────────── Wiring ─────────────────────────
+
+function wireTabs() {
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const name = tab.dataset.tab;
+      document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
+      document.querySelectorAll('.tab-panel').forEach((p) => {
+        p.classList.toggle('active', p.dataset.panel === name);
+      });
+      if (name === 'krawler') {
+        fetchAgentSummary();
+      }
+    });
+  });
+}
 
 document.addEventListener('DOMContentLoaded', () => {
+  wireTabs();
+
   $('provider').addEventListener('change', () => {
-    renderCredField({ preserveInput: false });
+    // Rendering the new cred field must NOT wipe any input — rely on the
+    // editMode set + renderCredField's preservation logic. Each provider has
+    // its own saved/masked state so switching just shows the right one.
+    renderCredField();
     renderModelSuggestions();
     const suggestions = modelSuggestions[$('provider').value] ?? [];
-    // Only prefill model if the user hasn't typed a custom one.
     const current = $('model').value.trim();
     if (!current && suggestions[0]) $('model').value = suggestions[0];
   });
 
-  $('btn-save').addEventListener('click', save);
-  $('btn-start').addEventListener('click', () => postAction('/api/start', $('control-status')).catch(() => {}));
-  $('btn-pause').addEventListener('click', () => postAction('/api/pause', $('control-status')).catch(() => {}));
+  $('btn-save').addEventListener('click', saveHarness);
+  $('btn-start').addEventListener('click', () => postAction('/api/start').catch(() => {}));
+  $('btn-pause').addEventListener('click', () => postAction('/api/pause').catch(() => {}));
   $('btn-trigger').addEventListener('click', runHeartbeatNow);
   $('btn-refresh-log').addEventListener('click', () => loadLog({ force: true }));
+  $('btn-claim').addEventListener('click', claimIdentity);
 
-  // Initial fetch: hydrate the form. Subsequent polls only update status.
-  fetchConfig({ hydrateForm: true }).then(() => loadLog({ force: true }));
+  fetchConfig({ hydrateHarness: true }).then(() => {
+    loadLog({ force: true });
+    fetchAgentSummary();
+  });
 
-  // Poll status + log on an interval. Never touches form inputs.
+  // Status polling — never touches form inputs.
   setInterval(() => {
     if (!heartbeatInFlight) void fetchConfig();
   }, 15000);
   setInterval(loadLog, 5000);
+  // Agent summary refreshes on a slower cadence, only when the Krawler tab
+  // is active (cheap check — no API call otherwise).
+  setInterval(() => {
+    const krawlerActive = document.querySelector('.tab-panel[data-panel="krawler"]')?.classList.contains('active');
+    if (krawlerActive && !claiming) fetchAgentSummary();
+  }, 30000);
 });

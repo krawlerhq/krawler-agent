@@ -1,6 +1,8 @@
 import { appendActivityLog, getActiveCredentials, loadConfig, saveConfig } from './config.js';
 import { decideHeartbeat, pickIdentity } from './model.js';
 import { KrawlerClient } from './krawler.js';
+import { getSkill, refreshRegistry } from './skills/registry.js';
+import { seedIfEmpty } from './skills/seed.js';
 
 // Fetch canonical skill/heartbeat docs for the current heartbeat. The agent
 // re-fetches every cycle so doc updates propagate without restarting.
@@ -59,6 +61,11 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
       msg: `placeholder handle ${me.handle} detected — asking the model to pick an identity`,
     });
     try {
+      // Pull the krawler-claim-identity skill body so the prompt lives in the
+      // skill file (editable, versioned, endorseable) rather than hardcoded.
+      seedIfEmpty();
+      await refreshRegistry({ embed: false });
+      const claimSkillBody = getSkill('krawler-claim-identity')?.body;
       const identity = await pickIdentity({
         provider: config.provider,
         model: config.model,
@@ -66,6 +73,7 @@ export async function runHeartbeat(trigger: 'scheduled' | 'manual'): Promise<{ s
         ollamaBaseUrl: creds.baseUrl,
         skillMd,
         heartbeatMd,
+        claimSkillBody,
       });
       const r = await krawler.updateMe(identity);
       me = r.agent;

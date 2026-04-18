@@ -5,13 +5,14 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { z } from 'zod';
 
-import { PROVIDERS, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
-import { MODEL_SUGGESTIONS } from './model.js';
+import { PROVIDERS, getActiveCredentials, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
+import { KrawlerClient } from './krawler.js';
+import { MODEL_SUGGESTIONS, pickIdentity } from './model.js';
 import { pauseAgent, runHeartbeat, scheduleNext, startAgent } from './loop.js';
 import { gatewayIsRunning, startGateway, stopGateway } from './gateway.js';
 import { listRecentTurns } from './agent/trajectory.js';
 import { countActiveFacts, listActiveFacts } from './user-model/facts.js';
-import { listSkills, refreshRegistry } from './skills/registry.js';
+import { getSkill, listSkills, refreshRegistry } from './skills/registry.js';
 import { seedIfEmpty } from './skills/seed.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -137,6 +138,116 @@ export async function buildServer() {
       endorsements: s.frontmatter.reputation.endorsements,
     }));
     return { skills, gatewayRunning: gatewayIsRunning() };
+  });
+
+  // --- Krawler account tab ---
+  //
+  // Summary of the Krawler-side identity: /me (handle, display, bio, avatar)
+  // plus a few recent posts from /feed. All authed by the stored kra_live_ key.
+  // Returns 404-ish `{ agent: null }` shapes instead of throwing so the UI can
+  // render an empty-state card without JS error handling.
+  app.get('/api/agent/summary', async () => {
+    const config = loadConfig();
+    if (!config.krawlerApiKey) {
+      return { agent: null, recentPosts: [], placeholderHandle: false, reason: 'no-key' };
+    }
+    const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
+    try {
+      const { agent } = await client.me();
+      const placeholderHandle = /^agent-[0-9a-f]{8}$/.test(agent.handle);
+      let recentPosts: unknown[] = [];
+      try {
+        const r = await client.feed();
+        // Trim to the author's own posts — that's what "your recent activity"
+        // should mean on the account tab. Others' posts belong elsewhere.
+        recentPosts = r.posts.filter((p) => p.author.handle === agent.handle).slice(0, 10);
+      } catch {
+        /* feed unreachable is non-fatal here */
+      }
+      return { agent, recentPosts, placeholderHandle, reason: null };
+    } catch (e) {
+      return { agent: null, recentPosts: [], placeholderHandle: false, reason: (e as Error).message };
+    }
+  });
+
+  // Claim a real identity for the Krawler agent this key represents. Loads the
+  // krawler-claim-identity skill body, asks the configured model to pick
+  // handle/displayName/bio/avatar, and PATCHes /me.
+  //
+  // Safety: by default this only runs when /me returns a placeholder handle
+  // (agent-xxxxxxxx) — same guard as the auto-claim path in loop.ts. That
+  // prevents a stray call (stale tab, double-click) from wiping an identity
+  // the agent has already claimed. To intentionally re-pick, POST with
+  // `{ force: true }`.
+  app.post('/api/agent/claim-identity', async (req, reply) => {
+    const body = (req.body ?? {}) as { force?: boolean };
+    const force = body.force === true;
+
+    const config = loadConfig();
+    const creds = getActiveCredentials(config);
+    const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
+    if (!hasModelCreds) {
+      reply.code(400);
+      return { error: `missing ${config.provider} credentials — add a key on the Harness tab first.` };
+    }
+    if (!config.krawlerApiKey) {
+      reply.code(400);
+      return { error: 'missing krawlerApiKey — paste one from krawler.com/dashboard first.' };
+    }
+
+    const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
+
+    // Guard: only claim over a placeholder handle unless the caller forced it.
+    // /me is cheap; the round-trip is worth the safety.
+    try {
+      const { agent: current } = await client.me();
+      const isPlaceholder = /^agent-[0-9a-f]{8}$/.test(current.handle);
+      if (!isPlaceholder && !force) {
+        reply.code(409);
+        return {
+          error: `agent already has a claimed identity (@${current.handle}). Pass { "force": true } to re-pick.`,
+          agent: current,
+        };
+      }
+    } catch (e) {
+      reply.code(502);
+      return { error: `could not verify current identity: ${(e as Error).message}` };
+    }
+
+    // Fetch the Krawler canonical docs so the model has the same context the
+    // heartbeat loop uses when auto-claiming.
+    const skillUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/skill.md';
+    const heartbeatUrl = config.krawlerBaseUrl.replace(/\/api\/?$/, '') + '/heartbeat.md';
+    async function fetchDoc(url: string): Promise<string> {
+      try {
+        const r = await fetch(url, { headers: { Accept: 'text/markdown,text/plain,*/*' } });
+        return r.ok ? await r.text() : '';
+      } catch {
+        return '';
+      }
+    }
+    const [skillMd, heartbeatMd] = await Promise.all([fetchDoc(skillUrl), fetchDoc(heartbeatUrl)]);
+
+    seedIfEmpty();
+    await refreshRegistry({ embed: false });
+    const claimSkillBody = getSkill('krawler-claim-identity')?.body;
+
+    try {
+      const identity = await pickIdentity({
+        provider: config.provider,
+        model: config.model,
+        apiKey: creds.apiKey,
+        ollamaBaseUrl: creds.baseUrl,
+        skillMd,
+        heartbeatMd,
+        claimSkillBody,
+      });
+      const { agent } = await client.updateMe(identity);
+      return { agent, identity };
+    } catch (e) {
+      reply.code(500);
+      return { error: (e as Error).message };
+    }
   });
 
   return app;
