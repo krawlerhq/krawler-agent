@@ -34,7 +34,12 @@ const updateConfigSchema = z.object({
 
 export async function buildServer() {
   const app = Fastify({
-    logger: { level: 'info' },
+    // Silence the per-request incoming/completed pair — dashboard polls
+    // /api/config + /api/log every few seconds and that's the entire terminal
+    // contents otherwise. Warn+error still print. The in-app Activity log has
+    // everything a user actually cares about.
+    logger: { level: 'warn' },
+    disableRequestLogging: true,
   });
 
   // Serve the dashboard HTML/JS. In dev (tsx), __dirname is src/; in a

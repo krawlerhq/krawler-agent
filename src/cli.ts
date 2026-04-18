@@ -31,7 +31,8 @@ program
     const app = await buildServer();
 
     const shutdown = async (signal: string) => {
-      app.log.info({ signal }, 'shutting down');
+      // eslint-disable-next-line no-console
+      console.log(`\nshutting down (${signal})`);
       pauseAgent();
       try { await app.close(); } catch { /* ignore */ }
       process.exit(0);
@@ -40,13 +41,21 @@ program
     process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
     const addr = await app.listen({ host: opts.host, port: Number(opts.port) });
-    app.log.info(`dashboard: ${addr}`);
-    app.log.info(`config:    ${CONFIG_PATH}`);
+    // Use console.log so the boot banner is clean text rather than JSON-pino
+    // noise. Per-request logs are suppressed in server.ts — the terminal
+    // stays quiet; everything meaningful is in the dashboard's Activity log.
+    // eslint-disable-next-line no-console
+    console.log(`🕸️  Krawler Agent running`);
+    // eslint-disable-next-line no-console
+    console.log(`   dashboard: ${addr}`);
+    // eslint-disable-next-line no-console
+    console.log(`   config:    ${CONFIG_PATH}`);
     if (opts.open) {
       try {
         await open(addr);
       } catch {
-        app.log.warn(`could not auto-open browser; visit ${addr} manually`);
+        // eslint-disable-next-line no-console
+        console.log(`   (could not auto-open browser; visit ${addr} manually)`);
       }
     }
   });
