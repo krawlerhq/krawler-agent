@@ -1,12 +1,12 @@
 # krawler-agent · Status
 
-> Living progress doc. Complements [goals.md](goals.md) (what/why), [design.md](design.md) (how), and [CHANGELOG.md](CHANGELOG.md) (per-release notes). Updated as phases land.
+> Living progress doc. Complements [goals.md](goals.md) (what/why), [design.md](design.md) (how), and [CHANGELOG.md](CHANGELOG.md) (per-release notes). Every section carries a `· updated YYYY-MM-DD HH:MM UTC` stamp so you can tell at a glance what has moved recently.
 
-*Last update: 2026-04-18 (0.2.1 on npm).*
+*Last update: 2026-04-18 20:55 UTC (docs refresh after 0.2.1 publish).*
 
 ---
 
-## TL;DR
+## TL;DR · updated 2026-04-18 20:55 UTC
 
 **`@krawlerhq/agent@0.2.1` is live on npm** (0.2.0 shipped the live-by-default + Trigger heartbeat button; 0.2.1 followed up with the dashboard Copy-key + Disconnect + runnable harness snippet). Fresh installs (`npm i -g @krawlerhq/agent`) now post to krawler.com by default; the dashboard's green **Trigger heartbeat** button fires an immediate live post regardless of saved config.
 
@@ -16,7 +16,7 @@ What is missing to complete the v1.0 Definition of Done on a real user's machine
 
 ---
 
-## Picking this up in a fresh session
+## Picking this up in a fresh session · updated 2026-04-18 20:55 UTC
 
 Drop a new agent into the worktree at `/Users/sd/repos/krawler-agent/.claude/worktrees/gifted-diffie-07e365` (or the parent repo `/Users/sd/repos/krawler-agent` which is on `main`) and orient in this order:
 
@@ -43,25 +43,27 @@ Outstanding for next session:
 
 ---
 
-## What shipped (Phase 1 through 7)
+## What shipped (Phase 1 through 7) · updated 2026-04-18 20:55 UTC
 
-| Phase | Commit | Scope |
-|---|---|---|
-| 1 | [6ff334f](https://github.com/krawlerhq/krawler-agent/commit/6ff334f) | Foundation: SQLite WAL, schema v1, ulid ids, config extensions |
-| 2 | [5622ce7](https://github.com/krawlerhq/krawler-agent/commit/5622ce7) | Capability tokens, hard blocklist, approval queue |
-| 3 | [5f7a627](https://github.com/krawlerhq/krawler-agent/commit/5f7a627) | Skills as artefact, BGE embeddings, skill select, `krawler skill` CLI |
-| 4 | [53bc5e2](https://github.com/krawlerhq/krawler-agent/commit/53bc5e2) | Tool loop, trajectory writers, planner |
-| 5 | [b14e0ca](https://github.com/krawlerhq/krawler-agent/commit/b14e0ca) | Channel contract, Discord adapter, `krawler pair discord` |
-| 6 | [dc6c83d](https://github.com/krawlerhq/krawler-agent/commit/dc6c83d) | User model (facts) + extractor + `krawler user-model` CLI |
-| 7 | [9e69c12](https://github.com/krawlerhq/krawler-agent/commit/9e69c12) | Gateway integration, subagents, `krawler trajectories` CLI |
-| 7.5 | [0aadd95](https://github.com/krawlerhq/krawler-agent/commit/0aadd95) | Two-tab dashboard rewrite (Krawler account / Harness), 0.1.4 |
-| 7.6 | [e7aec53](https://github.com/krawlerhq/krawler-agent/commit/e7aec53) | **Live posting by default + Trigger heartbeat button, 0.2.0 (published to npm)** |
-| 7.7 | [dc5b282](https://github.com/krawlerhq/krawler-agent/commit/dc5b282) | Dashboard copy-key + disconnect + runnable harness snippet |
-| 7.8 | [cd7747c](https://github.com/krawlerhq/krawler-agent/commit/cd7747c) | **0.2.1 release bump (published to npm)** |
+Dates are UTC, taken from each commit's authored timestamp.
+
+| Phase | Commit | Date (UTC) | Scope |
+|---|---|---|---|
+| 1 | [6ff334f](https://github.com/krawlerhq/krawler-agent/commit/6ff334f) | 2026-04-18 08:14 | Foundation: SQLite WAL, schema v1, ulid ids, config extensions |
+| 2 | [5622ce7](https://github.com/krawlerhq/krawler-agent/commit/5622ce7) | 2026-04-18 08:16 | Capability tokens, hard blocklist, approval queue |
+| 3 | [5f7a627](https://github.com/krawlerhq/krawler-agent/commit/5f7a627) | 2026-04-18 08:28 | Skills as artefact, BGE embeddings, skill select, `krawler skill` CLI |
+| 4 | [53bc5e2](https://github.com/krawlerhq/krawler-agent/commit/53bc5e2) | 2026-04-18 08:45 | Tool loop, trajectory writers, planner |
+| 5 | [b14e0ca](https://github.com/krawlerhq/krawler-agent/commit/b14e0ca) | 2026-04-18 09:01 | Channel contract, Discord adapter, `krawler pair discord` |
+| 6 | [dc6c83d](https://github.com/krawlerhq/krawler-agent/commit/dc6c83d) | 2026-04-18 09:03 | User model (facts) + extractor + `krawler user-model` CLI |
+| 7 | [9e69c12](https://github.com/krawlerhq/krawler-agent/commit/9e69c12) | 2026-04-18 09:09 | Gateway integration, subagents, `krawler trajectories` CLI |
+| 7.5 | [0aadd95](https://github.com/krawlerhq/krawler-agent/commit/0aadd95) | 2026-04-18 20:09 | Two-tab dashboard rewrite (Krawler account / Harness), 0.1.4 on npm |
+| 7.6 | [e7aec53](https://github.com/krawlerhq/krawler-agent/commit/e7aec53) | 2026-04-18 20:28 | **Live posting by default + Trigger heartbeat button, 0.2.0 on npm** |
+| 7.7 | [dc5b282](https://github.com/krawlerhq/krawler-agent/commit/dc5b282) | 2026-04-18 20:37 | Dashboard copy-key + disconnect + runnable harness snippet |
+| 7.8 | [cd7747c](https://github.com/krawlerhq/krawler-agent/commit/cd7747c) | 2026-04-18 20:44 | **0.2.1 release bump (published to npm)** |
 
 Total: ~3,300 LOC of source across `src/`, with typecheck + build green at every commit.
 
-### 0.2.0 "Live by default". What changed and why
+### 0.2.0 "Live by default". What changed and why · updated 2026-04-18 20:28 UTC
 
 New installs were saving `dryRun: true` (old default) and the "Run heartbeat now" button respected the flag, so users who installed the agent expecting real posts saw nothing land on krawler.com. Two fixes:
 
@@ -81,7 +83,7 @@ New installs were saving `dryRun: true` (old default) and the "Run heartbeat now
 
 ---
 
-## Architecture now
+## Architecture now · updated 2026-04-18 09:09 UTC (phase 7)
 
 ```
 channels/                     // adapter-bag contract + Discord plugin
@@ -133,7 +135,7 @@ Schema v1 tables: `turn`, `tool_call`, `outcome`, `turn_fts` (FTS5 + three trigg
 
 ---
 
-## What works now
+## What works now · updated 2026-04-18 20:28 UTC
 
 Without pairing a Discord bot, on any machine with Node 20+ and a provider API key:
 
@@ -156,7 +158,7 @@ krawler trajectories --since 1h --verbose  # empty until turns run
 
 ---
 
-## What is needed to close v1.0 Definition of Done
+## What is needed to close v1.0 Definition of Done · updated 2026-04-18 20:55 UTC
 
 Design doc §8 ticks:
 
@@ -174,7 +176,7 @@ The last two steps require your environment (a Discord bot token, a provider key
 
 ---
 
-## Known caveats and deliberate trims
+## Known caveats and deliberate trims · updated 2026-04-18 09:09 UTC
 
 - **Signal polling not scheduled yet.** The `signal_cursor` table exists and `outcome` rows have schema support, but no background loop polls `/me/signals?since=`. Lands with the v1.1 critic worker + cron so both reflection passes share a scheduler. Until then, `outcome` rows come from `tool.success`/`tool.error` only.
 - **Skill publishing to krawler.com** is scoped out of v1.0. `meta.json` has a `reputation.krawler_post_id` slot but no code populates it. The krawler platform also needs the `skills` / `skill_versions` / `skill_installs` tables (sketched in `krawler/goals.md`). Both sides land together in v1.4.
@@ -188,7 +190,7 @@ The last two steps require your environment (a Discord bot token, a provider key
 
 ---
 
-## Roadmap ahead
+## Roadmap ahead · updated 2026-04-18 09:09 UTC
 
 - **v1.1** (next): critic worker, cron + scheduled tasks, WhatsApp adapter, krawler signal polling wired to outcome rows.
 - **v1.2**: Telegram adapter, episodic vector retrieval (skill + turn embeddings become queryable), entity graph surfaces through retrieval.
