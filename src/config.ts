@@ -7,9 +7,26 @@ import { z } from 'zod';
 export const CONFIG_DIR = join(homedir(), '.config', 'krawler-agent');
 export const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
 export const LOG_PATH = join(CONFIG_DIR, 'activity.log');
+export const TOKENS_PATH = join(CONFIG_DIR, 'tokens.json');
+export const SKILLS_DIR = join(CONFIG_DIR, 'skills');
+export const BLOBS_DIR = join(CONFIG_DIR, 'blobs');
 
 export const PROVIDERS = ['anthropic', 'openai', 'google', 'openrouter', 'ollama'] as const;
 export type Provider = (typeof PROVIDERS)[number];
+
+const discordConfigSchema = z.object({
+  botToken: z.string().default(''),
+  applicationId: z.string().default(''),
+  // Optional: restrict bot to specific guilds. Empty = all guilds the bot is in.
+  guildIds: z.array(z.string()).default([]),
+});
+
+const factExtractorSchema = z.object({
+  // Empty string = auto-select "one tier down" from the main model (see
+  // design.md §10 #3). Anything else overrides.
+  provider: z.enum(PROVIDERS).optional(),
+  model: z.string().default(''),
+});
 
 const configSchema = z.object({
   // Active model
@@ -28,7 +45,7 @@ const configSchema = z.object({
   krawlerApiKey: z.string().default(''),
   krawlerBaseUrl: z.string().url().default('https://krawler.com/api'),
 
-  // Scheduler
+  // Scheduler (legacy heartbeat loop — see legacyHeartbeat flag below)
   // Bootstrap default: 10 min so a young network has visible activity.
   // Once Krawler is populated the spec's recommended 4-6h cadence is the norm —
   // users can dial this up from the dashboard.
@@ -42,6 +59,23 @@ const configSchema = z.object({
     .default({ post: true, endorse: true, follow: true }),
   // Dry run on by default — watch what the agent WOULD do before letting it post.
   dryRun: z.boolean().default(true),
+
+  // v1.0: keep the legacy cadenced heartbeat loop running (post/endorse/follow
+  // on a timer, no channels, no tools). When false, the gateway takes over and
+  // the loop is channel-driven. Stays true by default until v1.1 flips it.
+  legacyHeartbeat: z.boolean().default(true),
+
+  // v1.0: channel adapters. Credentials kept per-channel so pairing one
+  // doesn't disturb another.
+  channels: z
+    .object({
+      discord: discordConfigSchema.default({ botToken: '', applicationId: '', guildIds: [] }),
+    })
+    .default({ discord: { botToken: '', applicationId: '', guildIds: [] } }),
+
+  // v1.0: override for the fact extractor model. Default = "one tier down"
+  // from the main provider.
+  factExtractor: factExtractorSchema.default({ model: '' }),
 
   // State
   lastHeartbeat: z.string().optional(),
@@ -97,6 +131,18 @@ export function redactConfig(c: Config) {
     cadenceMinutes: c.cadenceMinutes,
     behaviors: c.behaviors,
     dryRun: c.dryRun,
+    legacyHeartbeat: c.legacyHeartbeat,
+    channels: {
+      discord: {
+        hasBotToken: Boolean(c.channels.discord.botToken),
+        applicationId: c.channels.discord.applicationId,
+        guildIds: c.channels.discord.guildIds,
+      },
+    },
+    factExtractor: {
+      provider: c.factExtractor.provider ?? null,
+      model: c.factExtractor.model,
+    },
     lastHeartbeat: c.lastHeartbeat ?? null,
     running: c.running,
   };
