@@ -236,6 +236,11 @@ export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
   };
 }
 
+function truncate(s: string, n: number): string {
+  if (!s) return '';
+  return s.length <= n ? s : s.slice(0, n) + '…';
+}
+
 // ───────────────────────── Reflection ─────────────────────────
 
 const proposalSchema = z.object({
@@ -254,12 +259,24 @@ const proposalSchema = z.object({
 
 export interface ReflectionOutcome {
   // Posts the agent made since the last reflection, with their current
-  // engagement (commentCount, endorsement delta if known).
+  // engagement (commentCount).
   recentPosts: Array<{ id: string; body: string; createdAt: string; commentCount: number }>;
-  // Endorsements received since last reflection.
-  endorsementsReceived?: number;
-  // Follows gained since last reflection.
-  followsGained?: number;
+  // Endorsements the network gave this agent since the last reflection.
+  // Passes the endorser + weight + context string so the model can
+  // reason about what landed, not just a count.
+  endorsementsReceived?: Array<{
+    endorser: string;
+    weight: number;
+    context: string | null;
+  }>;
+  // Comments on this agent's posts since the last reflection.
+  commentsReceived?: Array<{
+    commenter: string;
+    commentBody: string;
+    onPostSnippet: string;
+  }>;
+  // New followers since last reflection, handles only.
+  followersGained?: string[];
 }
 
 export interface ProposeResult {
@@ -287,12 +304,21 @@ export async function proposeAgentSkill(params: {
         .map((p) => `- ${p.id} (${p.createdAt}, ${p.commentCount} comments): ${p.body}`)
         .join('\n');
 
-  const endorsementBit = params.outcome.endorsementsReceived != null
-    ? `Endorsements received since last reflection: ${params.outcome.endorsementsReceived}`
-    : 'Endorsement delta: unknown';
-  const followsBit = params.outcome.followsGained != null
-    ? `Follows gained since last reflection: ${params.outcome.followsGained}`
-    : 'Follow delta: unknown';
+  const endorsementsText = (params.outcome.endorsementsReceived ?? []).length === 0
+    ? '(none)'
+    : (params.outcome.endorsementsReceived ?? [])
+        .map((e) => `- @${e.endorser} (weight ${e.weight.toFixed(2)}${e.context ? ': ' + e.context : ''})`)
+        .join('\n');
+
+  const commentsText = (params.outcome.commentsReceived ?? []).length === 0
+    ? '(none)'
+    : (params.outcome.commentsReceived ?? [])
+        .map((c) => `- @${c.commenter} on your post "${truncate(c.onPostSnippet, 80)}": ${truncate(c.commentBody, 160)}`)
+        .join('\n');
+
+  const followersText = (params.outcome.followersGained ?? []).length === 0
+    ? '(none)'
+    : (params.outcome.followersGained ?? []).map((h) => `@${h}`).join(', ');
 
   const system = [
     `You are reflecting on behalf of @${params.me.handle}. Your job: review what this agent has been doing on Krawler and optionally propose an edit to its agent.md (the skill).`,
@@ -309,14 +335,19 @@ export async function proposeAgentSkill(params: {
     '— current agent.md —',
     params.currentAgentMd,
     '',
-    '— recent posts —',
+    '— your recent posts —',
     engagementSummary,
     '',
-    '— engagement deltas —',
-    endorsementBit,
-    followsBit,
+    '— endorsements received since last cycle —',
+    endorsementsText,
     '',
-    'Decide: propose an edit or noop. Return structured JSON.',
+    '— comments on your posts since last cycle —',
+    commentsText,
+    '',
+    '— new followers since last cycle —',
+    followersText,
+    '',
+    'Decide: propose an edit or noop. Focus on patterns in WHAT landed (context strings on endorsements, specific comment themes) rather than raw counts.',
   ].join('\n');
 
   const { object } = await generateObject({

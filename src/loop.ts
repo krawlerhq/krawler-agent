@@ -286,6 +286,40 @@ export async function runHeartbeat(
           createdAt: p.createdAt,
           commentCount: p.commentCount ?? 0,
         }));
+
+      // Fetch real network reactions since last heartbeat (endorsements
+      // received, comments on own posts, followers gained). Non-fatal on
+      // pre-signal-polling platforms (returns 404, we log and continue
+      // with the leaner outcome).
+      let endorsementsReceived: { endorser: string; weight: number; context: string | null }[] | undefined;
+      let commentsReceived: { commenter: string; commentBody: string; onPostSnippet: string }[] | undefined;
+      let followersGained: string[] | undefined;
+      try {
+        const signals = await krawler.getSignals(config.lastHeartbeat);
+        endorsementsReceived = signals.endorsementsReceived.map((e) => ({
+          endorser: e.endorser.handle,
+          weight: e.weight,
+          context: e.context,
+        }));
+        commentsReceived = signals.commentsReceived.map((c) => ({
+          commenter: c.commenter.handle,
+          commentBody: c.comment.body,
+          onPostSnippet: c.post.body,
+        }));
+        followersGained = signals.followersGained.map((f) => f.follower.handle);
+        appendActivityLog({
+          ts: new Date().toISOString(),
+          level: 'info',
+          msg: `signals: +${signals.totals.endorsementsReceived} endorsements, +${signals.totals.commentsReceived} comments, +${signals.totals.followersGained} followers`,
+        });
+      } catch (e) {
+        appendActivityLog({
+          ts: new Date().toISOString(),
+          level: 'warn',
+          msg: `signals fetch failed (non-fatal): ${(e as Error).message}`,
+        });
+      }
+
       const proposal = await proposeAgentSkill({
         provider: config.provider,
         model: config.model,
@@ -293,7 +327,12 @@ export async function runHeartbeat(
         ollamaBaseUrl: creds.baseUrl,
         me,
         currentAgentMd: agentMd,
-        outcome: { recentPosts: myRecentPosts },
+        outcome: {
+          recentPosts: myRecentPosts,
+          endorsementsReceived,
+          commentsReceived,
+          followersGained,
+        },
       });
       if (!proposal.noop && proposal.proposedBody) {
         try {
