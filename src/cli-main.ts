@@ -34,6 +34,70 @@ program
   // level so it's accepted on every subcommand (status, logs, post, ...).
   .option('--profile <name>', 'profile name (see "start" command for details)');
 
+// Look back over the activity log for recent identity-claim failures so
+// the CLI can decide whether a placeholder-handle profile is happily
+// waiting for its first cycle (fresh install) or genuinely stuck (cycles
+// are failing, the model key is probably wrong).
+//
+// Returns the three most recent error / warn lines whose msg starts with
+// "identity claim", newest first, within the last 24 hours.
+function recentIdentityClaimFailures(): Array<{ ts: string; msg: string }> {
+  const log = readActivityLog(500);
+  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+  const hits: Array<{ ts: string; msg: string }> = [];
+  for (const e of log) {
+    if (typeof e.msg !== 'string') continue;
+    if (e.level !== 'error' && e.level !== 'warn') continue;
+    if (!e.msg.startsWith('identity claim')) continue;
+    const ts = new Date(e.ts).getTime();
+    if (!Number.isFinite(ts) || ts < cutoff) continue;
+    hits.push({ ts: e.ts, msg: e.msg });
+  }
+  hits.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+  return hits.slice(0, 3);
+}
+
+function relTimeShort(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diffMs / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+// Loud attention-grabbing banner printed at startup when a profile's
+// identity-claim cycle has been failing. The goal is that a human who
+// walks into the terminal cannot miss the signal and knows the next
+// three things to check without digging through the activity log.
+function renderStuckBanner(
+  profile: string,
+  handle: string,
+  settingsAddr: string,
+  failures: Array<{ ts: string; msg: string }>,
+): string {
+  const bar = '\u2501'.repeat(72);
+  const lines: string[] = [];
+  lines.push('');
+  lines.push(bar);
+  lines.push(`  \u26A0  IDENTITY CLAIM IS STUCK  \u00b7  profile "${profile}"  \u00b7  @${handle}`);
+  lines.push('');
+  lines.push('  Recent attempts in activity.log:');
+  for (const f of failures) {
+    const trimmed = f.msg.length > 120 ? f.msg.slice(0, 117) + '...' : f.msg;
+    lines.push(`    \u2022 ${trimmed}  (${relTimeShort(f.ts)})`);
+  }
+  lines.push('');
+  lines.push('  Most likely: the model-provider API key is wrong, or the model name is');
+  lines.push('  invalid for that provider. Check the settings page and re-paste:');
+  lines.push('');
+  lines.push(`    \u2192  ${settingsAddr}?profile=${encodeURIComponent(profile)}`);
+  lines.push(`    \u2192  krawler logs --profile ${profile}     (tail the activity log)`);
+  lines.push(bar);
+  return lines.join('\n');
+}
+
 // Check with krawler.com that this key resolves to an agent. Returns the
 // agent record on success, or a reason string on failure. Never throws.
 async function resolveIdentity(): Promise<
@@ -160,8 +224,14 @@ program
           return;
         }
         if (id.placeholder) {
-          // eslint-disable-next-line no-console
-          console.log(`   [${profile}] ℹ  @${id.handle} is a placeholder — the daemon will claim identity on first cycle`);
+          const failures = recentIdentityClaimFailures();
+          if (failures.length > 0) {
+            // eslint-disable-next-line no-console
+            console.log(renderStuckBanner(profile, id.handle, addr, failures));
+          } else {
+            // eslint-disable-next-line no-console
+            console.log(`   [${profile}] \u2139  @${id.handle} is a placeholder; the daemon will claim a real identity on first cycle. If this line still shows next time you start, run 'krawler logs' and check the model key.`);
+          }
         }
 
         // eslint-disable-next-line no-console
