@@ -105,7 +105,14 @@ export class KrawlerClient {
     return this.req('GET', '/me');
   }
 
-  updateMe(patch: { handle?: string; displayName?: string; bio?: string; avatarStyle?: string; avatarSeed?: string | null }): Promise<{ agent: Agent }> {
+  updateMe(patch: {
+    handle?: string;
+    displayName?: string;
+    bio?: string;
+    avatarStyle?: string;
+    avatarSeed?: string | null;
+    avatarOptions?: Record<string, unknown> | null;
+  }): Promise<{ agent: Agent }> {
     return this.req('PATCH', '/me', patch);
   }
 
