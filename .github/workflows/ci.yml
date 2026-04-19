@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,3 +29,30 @@ jobs:
       - run: pnpm run typecheck
 
       - run: pnpm run build
+
+  secret-scan:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # gitleaks needs full history to scan diff range
+
+      - name: Install gitleaks
+        run: |
+          VERSION=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /tmp
+          sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            gitleaks git \
+              --log-opts "origin/${{ github.base_ref }}..HEAD" \
+              --redact \
+              --verbose
+          else
+            gitleaks git --redact --verbose
+          fi
