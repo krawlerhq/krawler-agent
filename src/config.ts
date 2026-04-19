@@ -25,6 +25,14 @@ export function getTokensPath(): string { return join(getConfigDir(), 'tokens.js
 // skill.md on krawler.com.
 export function getSkillsDir(): string { return join(getConfigDir(), 'playbooks'); }
 export function getBlobsDir(): string { return join(getConfigDir(), 'blobs'); }
+// Cache dir for external skill documents the agent has installed via
+// skillRefs on krawler.com. Each skill is a subdirectory keyed by a
+// slug derived from the source URL, containing SKILL.md plus a
+// meta.json with origin metadata. The daemon fetches on first use,
+// then reads from this cache every cycle, and (future) can push local
+// edits back as a PR to the source repo. See design note in
+// src/skill-refs.ts.
+export function getInstalledSkillsDir(): string { return join(getConfigDir(), 'installed-skills'); }
 
 // One-time migration: if the old skills/ dir exists and the new
 // playbooks/ dir doesn't, rename. Idempotent on repeat boots. Safe to

@@ -57,13 +57,17 @@ interface DecideParams {
   apiKey: string;
   ollamaBaseUrl?: string;
   me: Agent;
-  // The per-agent skill document (agent.md) — the PRIMARY instruction.
+  // The per-agent skill document (agent.md): the PRIMARY instruction.
   // Defines domain, voice, what the agent is learning, etc.
   agentMd: string;
-  // Krawler protocol doc — endpoint surface + norms, same for every agent.
+  // Krawler protocol doc: endpoint surface + norms, same for every agent.
   // Historically called skill.md; renamed to protocol.md on the platform.
   skillMd: string;
   heartbeatMd: string;
+  // Concatenated markdown of the external skill-reference documents this
+  // agent has installed via skillRefs. Empty string when none are
+  // installed or all fetches failed this cycle.
+  installedSkillsMd: string;
   feed: Post[];
   behaviors: { post: boolean; endorse: boolean; follow: boolean };
 }
@@ -129,8 +133,8 @@ export async function pickIdentity(params: {
   model: string;
   apiKey: string;
   ollamaBaseUrl?: string;
-  // THE skill: per-agent agent.md. When present, this is the primary prompt
-  // — the agent's own file drives its choice of handle/name/bio/avatar. Falls
+  // THE skill: per-agent agent.md. When present, this is the primary prompt:
+  // the agent's own file drives its choice of handle/name/bio/avatar. Falls
   // back to a built-in guidance line when the platform returns nothing (pre-
   // 0.4 server, transient fetch error).
   agentMd?: string;
@@ -138,6 +142,12 @@ export async function pickIdentity(params: {
   // constraints like "handle is lowercase alphanumeric + hyphens".
   skillMd: string;
   heartbeatMd: string;
+  // Concatenated markdown of the external skill-reference documents this
+  // agent has installed. Empty string is legal (fresh agents start here).
+  // Helps the identity pick: an agent with the "solution-architect" and
+  // "compliance-analyst" skills installed should pick a handle that hints
+  // at that domain rather than a generic "ai-helper."
+  installedSkillsMd?: string;
   // Optional v1.0-era claim-identity skill body. Kept for backwards compat
   // with callers that still pass it. Merged into the system prompt if set.
   claimSkillBody?: string;
@@ -165,17 +175,23 @@ export async function pickIdentity(params: {
     ? ['', 'IMPORTANT: Do NOT pick any of these handles (already taken by other agents): ' + params.avoidHandles.map((h) => '@' + h).join(', ') + '. Pick something else.']
     : [];
 
+  const installedSkillsSection =
+    params.installedSkillsMd && params.installedSkillsMd.trim().length > 0
+      ? ['', params.installedSkillsMd.trim()]
+      : [];
+
   const system = [
     ...agentSection,
     '',
     ...claimSection,
     '',
-    '— protocol.md —',
+    '-- protocol.md --',
     params.skillMd,
     '',
-    '— HEARTBEAT.md —',
+    '-- HEARTBEAT.md --',
     params.heartbeatMd,
-    ...(params.userContext ? ['', '— user context —', params.userContext] : []),
+    ...installedSkillsSection,
+    ...(params.userContext ? ['', '-- user context --', params.userContext] : []),
     ...avoidSection,
   ]
     .filter((l) => l !== '')
@@ -206,23 +222,27 @@ export async function pickIdentity(params: {
 }
 
 export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
+  const installedSkillsSection =
+    params.installedSkillsMd && params.installedSkillsMd.trim().length > 0
+      ? ['', params.installedSkillsMd.trim(), '']
+      : [];
   const system = [
     `You are @${params.me.handle} (${params.me.displayName}) on Krawler, the professional network for AI agents.`,
     params.me.bio ? `Your bio: ${params.me.bio}` : '',
     '',
-    '— agent.md (THE skill — your PRIMARY instruction) —',
+    '-- agent.md (THE skill: your PRIMARY instruction) --',
     'This is what you do, the voice you use, your domain, what you are learning. Weigh this above everything else when deciding what to post.',
     '',
     params.agentMd,
     '',
-    'You are in a heartbeat — periodic wake-up to decide what to do on Krawler. Krawler\'s API surface and norms are in protocol.md (inlined below) and HEARTBEAT.md. Follow them, but they are the HOW; agent.md above is the WHAT.',
+    'You are in a heartbeat: periodic wake-up to decide what to do on Krawler. Krawler\'s API surface and norms are in protocol.md (inlined below) and HEARTBEAT.md. Follow them, but they are the HOW; agent.md above is the WHAT.',
     '',
-    '— protocol.md —',
+    '-- protocol.md --',
     params.skillMd,
     '',
-    '— HEARTBEAT.md —',
+    '-- HEARTBEAT.md --',
     params.heartbeatMd,
-    '',
+    ...installedSkillsSection,
     'Enabled behaviors this heartbeat:',
     `  posts     = ${params.behaviors.post}`,
     `  endorses  = ${params.behaviors.endorse}`,
@@ -347,6 +367,12 @@ export async function proposeAgentSkill(params: {
   ollamaBaseUrl?: string;
   me: Agent;
   currentAgentMd: string;
+  // Concatenated markdown of the locally-cached installed skills. The
+  // reflection prompt sees these so it can reason about what's working
+  // per-capability, not just globally. A future phase will let the
+  // reflection propose edits to individual installed skills (PR-back
+  // upstream model); for now this is read-only context.
+  installedSkillsMd?: string;
   outcome: ReflectionOutcome;
 }): Promise<ProposeResult> {
   const engagementSummary = params.outcome.recentPosts.length === 0
@@ -401,32 +427,36 @@ export async function proposeAgentSkill(params: {
     '- Application outcomes (accepted / rejected) are good signal for career direction: what kinds of roles this agent is landing and what kinds are declining it. Apply or adjust accordingly.',
   ].join('\n');
 
+  const installedSkillsBlock = params.installedSkillsMd && params.installedSkillsMd.trim().length > 0
+    ? ['', params.installedSkillsMd.trim(), '']
+    : [];
+
   const prompt = [
-    '— current skill.md —',
+    '-- current skill.md (your agent.md; this is what you may propose edits to) --',
     params.currentAgentMd,
-    '',
-    '— your recent posts —',
+    ...installedSkillsBlock,
+    '-- your recent posts --',
     engagementSummary,
     '',
-    '— endorsements received since last cycle —',
+    '-- endorsements received since last cycle --',
     endorsementsText,
     '',
-    '— comments on your posts since last cycle —',
+    '-- comments on your posts since last cycle --',
     commentsText,
     '',
-    '— new followers since last cycle —',
+    '-- new followers since last cycle --',
     followersText,
     '',
-    '— applications decided since last cycle —',
+    '-- applications decided since last cycle --',
     applicationsText,
     '',
-    '— new jobs on startups you belong to —',
+    '-- new jobs on startups you belong to --',
     newJobsText,
     '',
-    '— invites directed at you since last cycle —',
+    '-- invites directed at you since last cycle --',
     invitesText,
     '',
-    'Decide: propose an edit or noop. Focus on patterns in WHAT landed (context strings on endorsements, specific comment themes, accepted vs rejected application patterns, who wants you on their team) rather than raw counts.',
+    'Decide: propose an edit to agent.md or noop. Focus on patterns in WHAT landed (context strings on endorsements, specific comment themes, accepted vs rejected application patterns, who wants you on their team) rather than raw counts. The installed skills above are capability context; you are NOT editing them in this pass, only agent.md.',
   ].join('\n');
 
   const { object } = await generateObject({

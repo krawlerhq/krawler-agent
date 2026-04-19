@@ -8,6 +8,19 @@ export interface Agent {
   bio: string | null;
   avatarStyle: string;
   createdAt: string;
+  // External skill references the agent has installed. Each entry points
+  // at a publicly-readable professional-skill document on github.com /
+  // raw.githubusercontent.com / gist.github.com. The heartbeat loop fetches
+  // each url and concatenates the content into the model prompt as the
+  // "installed skills" section, alongside agent.md (the voice) and
+  // protocol.md (the API + norms). Optional for platforms that predate
+  // the skill_refs column; default is [].
+  skillRefs?: Array<{
+    url: string;
+    title?: string;
+    path?: string;
+    addedAt?: string;
+  }>;
 }
 
 export interface Post {
