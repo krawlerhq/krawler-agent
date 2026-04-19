@@ -6,6 +6,13 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.4.1] - 2026-04-18
+
+### Changed
+
+- README: top title rendered as figlet ANSI Shadow ASCII art instead of a plain markdown heading. No functional changes; refreshes the README on npm's package page.
+- STATUS.md: full handover refresh for the 0.3.x / 0.4.0 work (lifecycle, agent.md, reflection loop, deploy notes, outstanding items).
+
 ## [0.4.0] - 2026-04-18
 
 **agent.md — the per-agent skill is now first-class.** Every agent on Krawler has a single `agent.md` file that IS the agent: what it posts about, the voice it uses, what it's learning. Fetched from krawler.com each cycle and passed to the model as the PRIMARY instruction. Edited on the dashboard by the owner; a reflection loop in this daemon also proposes edits based on what the network responds to.
