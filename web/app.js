@@ -67,12 +67,24 @@ let modelSuggestions = {};
 let runtimeHydrated = false;
 const editMode = new Set();
 
+// Active profile the page is editing. Threaded through every /api/*
+// fetch as ?profile=<name>. Defaults to 'default' to match the legacy
+// single-profile layout at ~/.config/krawler-agent/. Changed via the
+// profile switcher in #profile-switcher.
+let activeProfile = 'default';
+let knownProfiles = ['default'];
+
+function withProfileQS(path) {
+  const sep = path.includes('?') ? '&' : '?';
+  return `${path}${sep}profile=${encodeURIComponent(activeProfile)}`;
+}
+
 async function fetchConfig({ hydrateRuntime } = { hydrateRuntime: false }) {
-  const r = await fetch('/api/config');
+  const r = await fetch(withProfileQS('/api/config'));
   const j = await r.json();
   currentConfig = j.config;
   modelSuggestions = j.modelSuggestions ?? {};
-  if (hydrateRuntime && !runtimeHydrated) {
+  if (hydrateRuntime) {
     hydrateRuntimeFromConfig();
     runtimeHydrated = true;
   }
@@ -93,7 +105,7 @@ function hydrateRuntimeFromConfig() {
 async function fetchIdentity() {
   const host = $('identity');
   try {
-    const r = await fetch('/api/me');
+    const r = await fetch(withProfileQS('/api/me'));
     const j = await r.json();
     renderIdentity(j);
   } catch (e) {
@@ -125,7 +137,7 @@ function renderIdentity(s) {
       <img class="avatar" src="${avatarUrl}" alt="@${escapeAttr(a.handle)}" />
       <div class="meta">
         <div class="handle">@${escapeHtml(a.handle)} <small>(placeholder)</small></div>
-        <div class="display">Claim a real handle at <a href="https://krawler.com/dashboard/" target="_blank">krawler.com/dashboard</a> before starting the heartbeat loop.</div>
+        <div class="display">Claim a real handle at <a href="https://krawler.com/agents/" target="_blank">krawler.com/dashboard</a> before starting the heartbeat loop.</div>
       </div>
     `;
     return;
@@ -139,7 +151,7 @@ function renderIdentity(s) {
       <div class="display">${escapeHtml(a.displayName || '')}</div>
       <div class="hb">${escapeHtml(lastHb)}</div>
     </div>
-    <a class="manage" href="https://krawler.com/dashboard/" target="_blank">Manage ↗</a>
+    <a class="manage" href="https://krawler.com/agents/" target="_blank">Manage ↗</a>
   `;
 }
 
@@ -285,7 +297,7 @@ async function saveRuntime() {
   setStatus(status, 'saving…');
   try {
     const patch = collectRuntimePatch();
-    const r = await fetch('/api/config', {
+    const r = await fetch(withProfileQS('/api/config'), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(patch),
@@ -314,7 +326,7 @@ async function saveKrawlerKey() {
   }
   setStatus(status, 'saving…');
   try {
-    const r = await fetch('/api/config', {
+    const r = await fetch(withProfileQS('/api/config'), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ krawlerApiKey: val }),
@@ -333,7 +345,7 @@ async function saveKrawlerKey() {
 async function copyKrawlerKey() {
   const status = $('krawler-save-status');
   try {
-    const r = await fetch('/api/agent/reveal-key');
+    const r = await fetch(withProfileQS('/api/agent/reveal-key'));
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const { key } = await r.json();
     await navigator.clipboard.writeText(key);
@@ -348,7 +360,7 @@ async function disconnectKrawlerKey() {
   const status = $('krawler-save-status');
   setStatus(status, 'disconnecting…');
   try {
-    const r = await fetch('/api/agent', { method: 'DELETE' });
+    const r = await fetch(withProfileQS('/api/agent'), { method: 'DELETE' });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const j = await r.json();
     currentConfig = j.config;
@@ -383,6 +395,65 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+// ───────────────────────── Profile switcher ─────────────────────────
+
+async function fetchProfiles() {
+  try {
+    const r = await fetch('/api/profiles');
+    const j = await r.json();
+    knownProfiles = Array.isArray(j.profiles) && j.profiles.length ? j.profiles : ['default'];
+  } catch {
+    knownProfiles = ['default'];
+  }
+  if (!knownProfiles.includes(activeProfile)) activeProfile = knownProfiles[0] ?? 'default';
+  renderProfileSwitcher();
+}
+
+function renderProfileSwitcher() {
+  const wrap = $('profile-switcher');
+  const sel = $('profile-select');
+  if (!wrap || !sel) return;
+  // Always show the switcher so operators see which profile they are
+  // editing. Even a single-profile install benefits from the "default"
+  // label and the + New button.
+  wrap.style.display = '';
+  sel.innerHTML = knownProfiles.map((p) => `<option value="${escapeAttr(p)}"${p === activeProfile ? ' selected' : ''}>${escapeHtml(p)}</option>`).join('');
+}
+
+async function switchProfile(name) {
+  if (!name || name === activeProfile) return;
+  activeProfile = name;
+  runtimeHydrated = false; // re-hydrate runtime fields for the new profile
+  editMode.clear();
+  await fetchConfig({ hydrateRuntime: true });
+  await fetchIdentity();
+}
+
+async function createProfile(rawName) {
+  const name = (rawName || '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(name)) {
+    alert('Profile name must be lowercase letters/numbers/_/-, 1 to 63 chars, cannot start with a hyphen.');
+    return;
+  }
+  if (knownProfiles.includes(name)) {
+    alert(`Profile "${name}" already exists — switching to it.`);
+    activeProfile = name;
+    await fetchProfiles();
+    await switchProfile(name);
+    return;
+  }
+  // Server lazily creates the profile dir + config.json when the first
+  // /api/config GET or PATCH lands for that profile. Trigger it by
+  // fetching the empty config. After this the profile shows up in
+  // /api/profiles and the switcher.
+  activeProfile = name;
+  runtimeHydrated = false;
+  editMode.clear();
+  await fetchConfig({ hydrateRuntime: true });
+  await fetchProfiles();
+  await fetchIdentity();
+}
+
 // ───────────────────────── Wiring ─────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -396,7 +467,36 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('btn-save').addEventListener('click', saveRuntime);
 
-  fetchConfig({ hydrateRuntime: true }).then(fetchIdentity);
+  // Profile switcher wiring.
+  $('profile-select')?.addEventListener('change', (e) => {
+    void switchProfile(e.target.value);
+  });
+  $('profile-add-btn')?.addEventListener('click', () => {
+    $('profile-add-btn').style.display = 'none';
+    $('profile-new-name').style.display = '';
+    $('profile-create-btn').style.display = '';
+    $('profile-cancel-btn').style.display = '';
+    $('profile-new-name').focus();
+  });
+  const resetNewProfileUI = () => {
+    $('profile-add-btn').style.display = '';
+    $('profile-new-name').style.display = 'none';
+    $('profile-new-name').value = '';
+    $('profile-create-btn').style.display = 'none';
+    $('profile-cancel-btn').style.display = 'none';
+  };
+  $('profile-cancel-btn')?.addEventListener('click', resetNewProfileUI);
+  $('profile-create-btn')?.addEventListener('click', async () => {
+    const name = $('profile-new-name').value.trim();
+    await createProfile(name);
+    resetNewProfileUI();
+  });
+  $('profile-new-name')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); $('profile-create-btn').click(); }
+    if (e.key === 'Escape') { e.preventDefault(); resetNewProfileUI(); }
+  });
+
+  fetchProfiles().then(() => fetchConfig({ hydrateRuntime: true })).then(fetchIdentity);
 
   setInterval(() => { fetchConfig().catch(() => {}); }, 15000);
   setInterval(fetchIdentity, 30000);
