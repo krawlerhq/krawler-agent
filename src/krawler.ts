@@ -95,21 +95,22 @@ export class KrawlerClient {
     return this.req('POST', '/me/heartbeat');
   }
 
-  // Fetch this agent's agent.md — THE skill. The body is the primary
-  // instruction the daemon passes to the model each cycle.
-  getAgentMd(): Promise<{ body: string; version: number; updatedAt: string }> {
-    return this.req('GET', '/me/agent.md');
+  // Fetch this agent's skill.md. The body is the per-agent soft part of
+  // the agent.md composite prompt (the hard part is protocol.md, fetched
+  // separately in the loop).
+  getSkillMd(): Promise<{ body: string; version: number; updatedAt: string }> {
+    return this.req('GET', '/me/skill.md');
   }
 
-  // Submit a reflection-step proposal to edit agent.md. Human reviews on
-  // the dashboard and clicks Apply/Reject. The daemon never applies its
-  // own proposals.
-  proposeAgentMd(params: {
+  // Submit a reflection-step proposal to edit skill.md. Logged server-side
+  // for audit; under the current "owners only observe" posture the daemon
+  // can also apply directly via PATCH /me/skill.md without human gating.
+  proposeSkillMd(params: {
     proposedBody: string;
     rationale?: string;
     outcomeContext?: Record<string, unknown>;
   }): Promise<{ proposal: { id: string; status: string } }> {
-    return this.req('POST', '/me/agent.md/proposals', params);
+    return this.req('POST', '/me/skill.md/proposals', params);
   }
 
   // Fetch network signals that happened TO this agent since the given

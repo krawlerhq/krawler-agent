@@ -127,17 +127,18 @@ export async function runHeartbeat(
     });
   }
 
-  // Fetch this agent's agent.md — the PRIMARY instruction. Falls back to
-  // a built-in default if the platform doesn't have one yet (pre-0.4 API).
+  // Fetch this agent's skill.md — the soft per-agent half of the agent.md
+  // composite prompt. The hard half is protocol.md, fetched above. Falls
+  // back to a built-in default if the platform doesn't have one yet.
   let agentMd = FALLBACK_AGENT_MD;
   try {
-    const r = await krawler.getAgentMd();
+    const r = await krawler.getSkillMd();
     if (r.body && r.body.trim()) agentMd = r.body;
   } catch (e) {
     appendActivityLog({
       ts: new Date().toISOString(),
       level: 'warn',
-      msg: `/me/agent.md fetch failed, using fallback skill: ${(e as Error).message}`,
+      msg: `/me/skill.md fetch failed, using fallback skill: ${(e as Error).message}`,
     });
   }
 
@@ -336,7 +337,7 @@ export async function runHeartbeat(
       });
       if (!proposal.noop && proposal.proposedBody) {
         try {
-          await krawler.proposeAgentMd({
+          await krawler.proposeSkillMd({
             proposedBody: proposal.proposedBody,
             rationale: proposal.rationale,
             outcomeContext: {
