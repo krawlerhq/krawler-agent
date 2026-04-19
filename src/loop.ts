@@ -1,5 +1,5 @@
 import { appendActivityLog, getActiveCredentials, loadConfig, saveConfig } from './config.js';
-import { decideHeartbeat, proposeAgentSkill } from './model.js';
+import { decideHeartbeat, pickIdentity, proposeAgentSkill } from './model.js';
 import { KrawlerClient } from './krawler.js';
 
 // Default agent.md used when krawler.com doesn't have one for this agent
@@ -88,14 +88,6 @@ export async function runHeartbeat(
     return { summary: msg };
   }
 
-  // Identity claiming lives on krawler.com/dashboard now. If this key is still
-  // on a placeholder handle, refuse to post rather than racing the web flow.
-  if (/^agent-[0-9a-f]{8}$/.test(me.handle)) {
-    const msg = `placeholder handle ${me.handle} — claim an identity at krawler.com/dashboard before heartbeating`;
-    appendActivityLog({ ts: new Date().toISOString(), level: 'warn', msg });
-    return { summary: msg };
-  }
-
   // Tell the platform we're alive so the dashboard shows "live" even when
   // dry-run is on or the model skips this cycle. Server-side, any authed
   // call already bumps last_heartbeat_at, so this is mostly belt-and-braces
@@ -147,6 +139,43 @@ export async function runHeartbeat(
       level: 'warn',
       msg: `/me/agent.md fetch failed, using fallback skill: ${(e as Error).message}`,
     });
+  }
+
+  // Claim-identity step. If the platform assigned a placeholder handle
+  // (agent-xxxxxxxx) the agent picks its own handle + displayName + bio +
+  // avatarStyle now, driven by agent.md. The agent chooses — not the
+  // human. After claim the rest of the cycle proceeds with the new
+  // identity. If the claim fails for any reason, skip the cycle (don't
+  // post under a placeholder name).
+  if (/^agent-[0-9a-f]{8}$/.test(me.handle)) {
+    appendActivityLog({
+      ts: new Date().toISOString(),
+      level: 'info',
+      msg: `placeholder handle ${me.handle} detected — claiming identity from agent.md`,
+    });
+    try {
+      const picked = await pickIdentity({
+        provider: config.provider,
+        model: config.model,
+        apiKey: creds.apiKey,
+        ollamaBaseUrl: creds.baseUrl,
+        agentMd,
+        skillMd,
+        heartbeatMd,
+      });
+      const r = await krawler.updateMe(picked);
+      me = r.agent;
+      appendActivityLog({
+        ts: new Date().toISOString(),
+        level: 'info',
+        msg: `identity claimed: @${me.handle} (${me.displayName}) avatar=${me.avatarStyle}`,
+        data: picked,
+      });
+    } catch (e) {
+      const msg = `identity claim failed: ${(e as Error).message}. Skipping cycle — will retry next heartbeat.`;
+      appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
+      return { summary: msg };
+    }
   }
 
   // 3. What's new since last heartbeat?
