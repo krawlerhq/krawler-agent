@@ -6,6 +6,7 @@ import Fastify from 'fastify';
 import { z } from 'zod';
 
 import { PROVIDERS, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
+import { DEFAULT_PROFILE, listProfiles, withProfile } from './profile-context.js';
 import { KrawlerClient } from './krawler.js';
 import { MODEL_SUGGESTIONS } from './model.js';
 import { startGateway } from './gateway.js';
@@ -45,9 +46,31 @@ export async function buildServer() {
   const webRoot = resolve(__dirname, '..', 'web');
   await app.register(fastifyStatic, { root: webRoot, prefix: '/', decorateReply: false });
 
-  app.get('/api/config', async () => {
-    return { config: redactConfig(loadConfig()), modelSuggestions: MODEL_SUGGESTIONS };
+  // Which profile does this request target? ?profile=<name> query param
+  // selects a specific profile; omitted falls back to the default so
+  // the existing single-profile UI keeps working unchanged. Every
+  // handler that reads/writes config wraps its body in withProfile()
+  // so loadConfig / saveConfig resolve to the right files.
+  const profileOf = (req: { query: unknown }): string => {
+    const q = (req.query ?? {}) as { profile?: string };
+    const name = (q.profile || '').trim();
+    return name || DEFAULT_PROFILE;
+  };
+
+  // List every configured profile plus the default. Drives a future
+  // profile-switcher widget; already exposed so curl-callers can see
+  // what's on disk.
+  app.get('/api/profiles', async () => {
+    const names = listProfiles();
+    if (!names.includes(DEFAULT_PROFILE)) names.unshift(DEFAULT_PROFILE);
+    return { profiles: names };
   });
+
+  app.get('/api/config', async (req) => withProfile(profileOf(req), () => ({
+    profile: profileOf(req),
+    config: redactConfig(loadConfig()),
+    modelSuggestions: MODEL_SUGGESTIONS,
+  })));
 
   app.patch('/api/config', async (req, reply) => {
     const parsed = updateConfigSchema.safeParse(req.body);
@@ -59,54 +82,56 @@ export async function buildServer() {
     for (const k of ['anthropicApiKey', 'openaiApiKey', 'googleApiKey', 'openrouterApiKey', 'krawlerApiKey']) {
       if (patch[k] === '') delete patch[k];
     }
-    const current = loadConfig();
-    const merged = { ...current, ...patch };
-    saveConfig(merged);
-    return { config: redactConfig(loadConfig()) };
+    return withProfile(profileOf(req), () => {
+      const current = loadConfig();
+      const merged = { ...current, ...patch };
+      saveConfig(merged);
+      return { profile: profileOf(req), config: redactConfig(loadConfig()) };
+    });
   });
 
-  app.get('/api/log', async (req) => {
+  app.get('/api/log', async (req) => withProfile(profileOf(req), () => {
     const limit = Math.min(500, Math.max(1, Number((req.query as { limit?: string }).limit) || 200));
-    return { log: readActivityLog(limit) };
-  });
+    return { profile: profileOf(req), log: readActivityLog(limit) };
+  }));
 
   // Read-only "who is this key bound to on krawler.com" passthrough. Surfaces
   // handle + display name + placeholder flag so the settings page can show a
   // truthful identity header instead of duplicating state locally.
-  app.get('/api/me', async () => {
+  app.get('/api/me', async (req) => withProfile(profileOf(req), async () => {
     const config = loadConfig();
     if (!config.krawlerApiKey) {
-      return { agent: null, placeholderHandle: false, reason: 'no-key' };
+      return { profile: profileOf(req), agent: null, placeholderHandle: false, reason: 'no-key' };
     }
     const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
     try {
       const { agent } = await client.me();
       const placeholderHandle = /^agent-[0-9a-f]{8}$/.test(agent.handle);
-      return { agent, placeholderHandle, reason: null };
+      return { profile: profileOf(req), agent, placeholderHandle, reason: null };
     } catch (e) {
-      return { agent: null, placeholderHandle: false, reason: (e as Error).message };
+      return { profile: profileOf(req), agent: null, placeholderHandle: false, reason: (e as Error).message };
     }
-  });
+  }));
 
   // Reveal the stored key over the loopback so the settings page can copy it
   // for use in other harnesses (OpenClaw, Hermes, your own). 127.0.0.1 + 0600
   // config file means the trust boundary is already crossed.
-  app.get('/api/agent/reveal-key', async (_req, reply) => {
+  app.get('/api/agent/reveal-key', async (req, reply) => withProfile(profileOf(req), () => {
     const config = loadConfig();
     if (!config.krawlerApiKey) {
       reply.code(404);
       return { error: 'no Krawler key configured' };
     }
-    return { key: config.krawlerApiKey };
-  });
+    return { profile: profileOf(req), key: config.krawlerApiKey };
+  }));
 
   // Disconnect the local install from the Krawler agent. Clears the key
   // locally; the agent on krawler.com is untouched.
-  app.delete('/api/agent', async () => {
+  app.delete('/api/agent', async (req) => withProfile(profileOf(req), () => {
     const config = loadConfig();
     saveConfig({ ...config, krawlerApiKey: '' });
-    return { config: redactConfig(loadConfig()) };
-  });
+    return { profile: profileOf(req), config: redactConfig(loadConfig()) };
+  }));
 
   // Start the v1.0 gateway (channel-driven tool loop) when a channel has creds.
   // The legacy cadenced loop is owned by the CLI process directly (see cli.ts);

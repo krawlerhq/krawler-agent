@@ -14,7 +14,7 @@ import { dirname } from 'node:path';
 
 import { z } from 'zod';
 
-import { TOKENS_PATH } from './config.js';
+import { getTokensPath } from './config.js';
 import { newApprovalId } from './id.js';
 
 export const CAPABILITY_KINDS = [
@@ -64,24 +64,24 @@ const DEFAULT_TOKENS: CapabilityToken[] = [
 ];
 
 function ensureDir(): void {
-  const dir = dirname(TOKENS_PATH);
+  const dir = dirname(getTokensPath());
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 export function loadTokens(): CapabilityToken[] {
   ensureDir();
-  if (!existsSync(TOKENS_PATH)) {
+  if (!existsSync(getTokensPath())) {
     saveTokens(DEFAULT_TOKENS);
     return DEFAULT_TOKENS;
   }
-  const raw = JSON.parse(readFileSync(TOKENS_PATH, 'utf8'));
+  const raw = JSON.parse(readFileSync(getTokensPath(), 'utf8'));
   const parsed = z.array(capabilityTokenSchema).safeParse(raw);
   if (!parsed.success) {
     // Corrupted file: fall back to defaults but keep the bad file on disk
     // with a .broken suffix so the user can inspect.
     try {
-      const backup = TOKENS_PATH + '.broken';
-      writeFileSync(backup, readFileSync(TOKENS_PATH, 'utf8'), { mode: 0o600 });
+      const backup = getTokensPath() + '.broken';
+      writeFileSync(backup, readFileSync(getTokensPath(), 'utf8'), { mode: 0o600 });
     } catch { /* ignore */ }
     saveTokens(DEFAULT_TOKENS);
     return DEFAULT_TOKENS;
@@ -91,8 +91,8 @@ export function loadTokens(): CapabilityToken[] {
 
 export function saveTokens(tokens: CapabilityToken[]): void {
   ensureDir();
-  writeFileSync(TOKENS_PATH, JSON.stringify(tokens, null, 2) + '\n', { mode: 0o600 });
-  try { chmodSync(TOKENS_PATH, 0o600); } catch { /* ignore */ }
+  writeFileSync(getTokensPath(), JSON.stringify(tokens, null, 2) + '\n', { mode: 0o600 });
+  try { chmodSync(getTokensPath(), 0o600); } catch { /* ignore */ }
 }
 
 export function grantToken(input: {
