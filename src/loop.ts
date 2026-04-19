@@ -166,27 +166,60 @@ export async function runHeartbeat(
       level: 'info',
       msg: `placeholder handle ${me.handle} detected — claiming identity from agent.md`,
     });
-    try {
-      const picked = await pickIdentity({
-        provider: config.provider,
-        model: config.model,
-        apiKey: creds.apiKey,
-        ollamaBaseUrl: creds.baseUrl,
-        agentMd,
-        skillMd,
-        heartbeatMd,
-      });
-      const r = await krawler.updateMe(picked);
-      me = r.agent;
-      const optionCount = picked.avatarOptions ? Object.keys(picked.avatarOptions).length : 0;
-      appendActivityLog({
-        ts: new Date().toISOString(),
-        level: 'info',
-        msg: `identity claimed: @${me.handle} (${me.displayName}) avatar=${me.avatarStyle}/${picked.avatarSeed}${optionCount ? ` · ${optionCount} option${optionCount === 1 ? '' : 's'}` : ''}`,
-        data: picked,
-      });
-    } catch (e) {
-      const msg = `identity claim failed: ${(e as Error).message}. Skipping cycle — will retry next heartbeat.`;
+    // Retry on handle collision. The server returns 409 with a message
+    // of the form: handle "foo" is taken. We parse the colliding handle
+    // out, feed it back to pickIdentity as avoidHandles, and let the
+    // model pick something else. Capped so a broken prompt doesn't burn
+    // tokens indefinitely.
+    const MAX_CLAIM_ATTEMPTS = 3;
+    const taken: string[] = [];
+    let claimed = false;
+    let lastErr: Error | null = null;
+    for (let attempt = 1; attempt <= MAX_CLAIM_ATTEMPTS; attempt++) {
+      try {
+        const picked = await pickIdentity({
+          provider: config.provider,
+          model: config.model,
+          apiKey: creds.apiKey,
+          ollamaBaseUrl: creds.baseUrl,
+          agentMd,
+          skillMd,
+          heartbeatMd,
+          avoidHandles: taken.length > 0 ? taken : undefined,
+        });
+        const r = await krawler.updateMe(picked);
+        me = r.agent;
+        const optionCount = picked.avatarOptions ? Object.keys(picked.avatarOptions).length : 0;
+        appendActivityLog({
+          ts: new Date().toISOString(),
+          level: 'info',
+          msg: `identity claimed: @${me.handle} (${me.displayName}) avatar=${me.avatarStyle}/${picked.avatarSeed}${optionCount ? ` · ${optionCount} option${optionCount === 1 ? '' : 's'}` : ''}${attempt > 1 ? ` · attempt ${attempt}/${MAX_CLAIM_ATTEMPTS}` : ''}`,
+          data: picked,
+        });
+        claimed = true;
+        break;
+      } catch (e) {
+        lastErr = e as Error;
+        const status = (e as Error & { status?: number }).status;
+        const msg = (e as Error).message;
+        const takenMatch = /"([^"]+)" is taken/.exec(msg);
+        const isCollision = status === 409 && !!takenMatch;
+        if (isCollision && attempt < MAX_CLAIM_ATTEMPTS) {
+          const h = takenMatch[1]!;
+          if (!taken.includes(h)) taken.push(h);
+          appendActivityLog({
+            ts: new Date().toISOString(),
+            level: 'warn',
+            msg: `identity claim attempt ${attempt}/${MAX_CLAIM_ATTEMPTS}: @${h} is taken, retrying with avoidance hint`,
+          });
+          continue;
+        }
+        break;
+      }
+    }
+    if (!claimed) {
+      const suffix = taken.length > 0 ? ` (tried to avoid: ${taken.map((h) => '@' + h).join(', ')})` : '';
+      const msg = `identity claim failed: ${lastErr ? lastErr.message : 'unknown'}${suffix}. Skipping cycle; will retry next heartbeat.`;
       appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
       return { summary: msg };
     }

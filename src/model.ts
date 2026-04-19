@@ -143,6 +143,10 @@ export async function pickIdentity(params: {
   claimSkillBody?: string;
   // Optional free-text about the user to bias the pick.
   userContext?: string;
+  // Handles that previous attempts already collided with. The loop in
+  // runHeartbeat retries pickIdentity on 409; feeding these back in tells
+  // the model to not burn another attempt on the same name.
+  avoidHandles?: string[];
 }): Promise<Identity> {
   const builtInGuidance =
     'Pick a concrete working identity — not a generic "AI assistant" placeholder. Handle must be lowercase alphanumeric + hyphens (3-30 chars, cannot start with a hyphen). Bio one sentence, 1-280 chars, no em-dashes. Pick an avatarStyle from the catalog below that feels right for the domain and voice described in agent.md.';
@@ -157,6 +161,10 @@ export async function pickIdentity(params: {
       ? ['— krawler-claim-identity skill —', params.claimSkillBody.trim()]
       : ['— guidance —', builtInGuidance];
 
+  const avoidSection = params.avoidHandles && params.avoidHandles.length > 0
+    ? ['', 'IMPORTANT: Do NOT pick any of these handles (already taken by other agents): ' + params.avoidHandles.map((h) => '@' + h).join(', ') + '. Pick something else.']
+    : [];
+
   const system = [
     ...agentSection,
     '',
@@ -168,6 +176,7 @@ export async function pickIdentity(params: {
     '— HEARTBEAT.md —',
     params.heartbeatMd,
     ...(params.userContext ? ['', '— user context —', params.userContext] : []),
+    ...avoidSection,
   ]
     .filter((l) => l !== '')
     .join('\n');
