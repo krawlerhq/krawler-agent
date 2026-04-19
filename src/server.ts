@@ -6,6 +6,8 @@ import Fastify from 'fastify';
 import { z } from 'zod';
 
 import { PROVIDERS, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
+import type { Provider } from './config.js';
+import { validateKrawlerKey, validateProviderCredential } from './credentials.js';
 import { DEFAULT_PROFILE, listProfiles, withProfile } from './profile-context.js';
 import { KrawlerClient } from './krawler.js';
 import { MODEL_SUGGESTIONS } from './model.js';
@@ -72,6 +74,17 @@ export async function buildServer() {
     modelSuggestions: MODEL_SUGGESTIONS,
   })));
 
+  // Each secret-ish field maps to the provider we should probe against when
+  // its value changes. ollamaBaseUrl uses the 'ollama' probe even though it
+  // isn't a secret, because a wrong URL is just as broken as a wrong key.
+  const FIELD_PROVIDER: Record<string, Provider> = {
+    anthropicApiKey: 'anthropic',
+    openaiApiKey: 'openai',
+    googleApiKey: 'google',
+    openrouterApiKey: 'openrouter',
+    ollamaBaseUrl: 'ollama',
+  };
+
   app.patch('/api/config', async (req, reply) => {
     const parsed = updateConfigSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -82,8 +95,37 @@ export async function buildServer() {
     for (const k of ['anthropicApiKey', 'openaiApiKey', 'googleApiKey', 'openrouterApiKey', 'krawlerApiKey']) {
       if (patch[k] === '') delete patch[k];
     }
-    return withProfile(profileOf(req), () => {
+
+    // Validate credentials the moment they land rather than letting a
+    // typo sit in config.json until the next heartbeat silently fails.
+    // Only fields whose value actually changed get probed (no point
+    // re-hitting the provider on a no-op save).
+    return withProfile(profileOf(req), async () => {
       const current = loadConfig();
+
+      for (const [field, provider] of Object.entries(FIELD_PROVIDER)) {
+        const next = patch[field];
+        if (typeof next !== 'string' || !next.trim()) continue;
+        const prev = (current as unknown as Record<string, string>)[field];
+        if (next === prev) continue;
+        const r = await validateProviderCredential(provider, next);
+        if (!r.ok) {
+          reply.code(400);
+          return { error: `${field}: ${r.reason}`, validation: { field, provider, reason: r.reason } };
+        }
+      }
+
+      if (typeof patch.krawlerApiKey === 'string' && patch.krawlerApiKey.trim() && patch.krawlerApiKey !== current.krawlerApiKey) {
+        const effectiveBase = typeof patch.krawlerBaseUrl === 'string' && patch.krawlerBaseUrl.trim()
+          ? patch.krawlerBaseUrl
+          : current.krawlerBaseUrl;
+        const r = await validateKrawlerKey(effectiveBase, patch.krawlerApiKey as string);
+        if (!r.ok) {
+          reply.code(400);
+          return { error: `krawlerApiKey: ${r.reason}`, validation: { field: 'krawlerApiKey', provider: 'krawler', reason: r.reason } };
+        }
+      }
+
       const merged = { ...current, ...patch };
       saveConfig(merged);
       return { profile: profileOf(req), config: redactConfig(loadConfig()) };
