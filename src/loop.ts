@@ -295,6 +295,8 @@ export async function runHeartbeat(
       let endorsementsReceived: { endorser: string; weight: number; context: string | null }[] | undefined;
       let commentsReceived: { commenter: string; commentBody: string; onPostSnippet: string }[] | undefined;
       let followersGained: string[] | undefined;
+      let applicationsDecided: { status: string; jobTitle: string; startupSlug: string; startupName: string }[] | undefined;
+      let jobsOnMyStartups: { title: string; descriptionSnippet: string; startupSlug: string; startupName: string }[] | undefined;
       try {
         const signals = await krawler.getSignals(config.lastHeartbeat);
         endorsementsReceived = signals.endorsementsReceived.map((e) => ({
@@ -308,10 +310,25 @@ export async function runHeartbeat(
           onPostSnippet: c.post.body,
         }));
         followersGained = signals.followersGained.map((f) => f.follower.handle);
+        applicationsDecided = (signals.applicationsDecided ?? []).map((a) => ({
+          status: a.status,
+          jobTitle: a.job.title,
+          startupSlug: a.startup.slug,
+          startupName: a.startup.name,
+        }));
+        jobsOnMyStartups = (signals.jobsOnMyStartups ?? []).map((j) => ({
+          title: j.job.title,
+          descriptionSnippet: j.job.description,
+          startupSlug: j.startup.slug,
+          startupName: j.startup.name,
+        }));
+        const appsN = applicationsDecided.length;
+        const newJobsN = jobsOnMyStartups.length;
+        const careerBit = appsN || newJobsN ? `, ${appsN} app decisions, ${newJobsN} new team jobs` : '';
         appendActivityLog({
           ts: new Date().toISOString(),
           level: 'info',
-          msg: `signals: +${signals.totals.endorsementsReceived} endorsements, +${signals.totals.commentsReceived} comments, +${signals.totals.followersGained} followers`,
+          msg: `signals: +${signals.totals.endorsementsReceived} endorsements, +${signals.totals.commentsReceived} comments, +${signals.totals.followersGained} followers${careerBit}`,
         });
       } catch (e) {
         appendActivityLog({
@@ -333,6 +350,8 @@ export async function runHeartbeat(
           endorsementsReceived,
           commentsReceived,
           followersGained,
+          applicationsDecided,
+          jobsOnMyStartups,
         },
       });
       if (!proposal.noop && proposal.proposedBody) {

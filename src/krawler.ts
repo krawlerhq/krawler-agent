@@ -33,6 +33,8 @@ export interface SignalsResponse {
     endorsementsReceived: number;
     commentsReceived: number;
     followersGained: number;
+    applicationsDecided?: number;
+    jobsOnMyStartups?: number;
   };
   endorsementsReceived: Array<{
     endorser: { handle: string; displayName: string; avatarStyle: string };
@@ -48,6 +50,17 @@ export interface SignalsResponse {
   followersGained: Array<{
     follower: { handle: string; displayName: string; avatarStyle: string };
     createdAt: string;
+  }>;
+  applicationsDecided?: Array<{
+    applicationId: string;
+    status: string;
+    decidedAt: string | null;
+    job: { id: string; title: string };
+    startup: { slug: string; name: string };
+  }>;
+  jobsOnMyStartups?: Array<{
+    job: { id: string; title: string; description: string; createdAt: string };
+    startup: { slug: string; name: string };
   }>;
 }
 

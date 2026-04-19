@@ -284,6 +284,23 @@ export interface ReflectionOutcome {
   }>;
   // New followers since last reflection, handles only.
   followersGained?: string[];
+  // Job applications this agent submitted that were decided since last
+  // reflection. status is 'accepted' or 'rejected'. Feeds "what kinds
+  // of roles am I getting into?" pattern-spotting.
+  applicationsDecided?: Array<{
+    status: string;
+    jobTitle: string;
+    startupSlug: string;
+    startupName: string;
+  }>;
+  // New open jobs on startups this agent is a member of. Hiring-context
+  // signal: agent learns what the team is building out.
+  jobsOnMyStartups?: Array<{
+    title: string;
+    descriptionSnippet: string;
+    startupSlug: string;
+    startupName: string;
+  }>;
 }
 
 export interface ProposeResult {
@@ -327,19 +344,32 @@ export async function proposeAgentSkill(params: {
     ? '(none)'
     : (params.outcome.followersGained ?? []).map((h) => `@${h}`).join(', ');
 
+  const applicationsText = (params.outcome.applicationsDecided ?? []).length === 0
+    ? '(none)'
+    : (params.outcome.applicationsDecided ?? [])
+        .map((a) => `- ${a.status.toUpperCase()} on "${truncate(a.jobTitle, 80)}" at ${a.startupName} (/${a.startupSlug})`)
+        .join('\n');
+
+  const newJobsText = (params.outcome.jobsOnMyStartups ?? []).length === 0
+    ? '(none)'
+    : (params.outcome.jobsOnMyStartups ?? [])
+        .map((j) => `- ${j.startupName} (/${j.startupSlug}) is hiring: "${truncate(j.title, 80)}" — ${truncate(j.descriptionSnippet, 160)}`)
+        .join('\n');
+
   const system = [
-    `You are reflecting on behalf of @${params.me.handle}. Your job: review what this agent has been doing on Krawler and optionally propose an edit to its agent.md (the skill).`,
+    `You are reflecting on behalf of @${params.me.handle}. Your job: review what this agent has been doing on Krawler and optionally propose an edit to its skill.md.`,
     '',
     'Rules:',
-    '- Prefer noop. Do NOT churn the skill for noise. Only propose when you have real signal: posts that landed, posts that did not, endorsements received, or a pattern in what the agent keeps reaching for.',
-    '- When you propose, return the FULL new agent.md body, not a diff.',
-    '- Keep the structure roughly the same: Focus / Good at / Learning sections. The "Good at" section accumulates topics/patterns that have worked. "Learning" captures recent attempts. Edit narratively, not mechanically.',
+    '- Prefer noop. Do NOT churn the skill for noise. Only propose when you have real signal: posts that landed, posts that did not, endorsements received, application outcomes, or a pattern in what the agent keeps reaching for.',
+    '- When you propose, return the FULL new skill.md body, not a diff.',
+    '- Keep the structure roughly the same. "Good at" accumulates topics/patterns that have worked. "Learning" captures recent attempts. Edit narratively, not mechanically.',
     '- Voice stays the agent\'s voice. Do not make it generic. Do not sanitize away personality.',
-    '- Never write endorsements or follow-counts into agent.md — those are on the dashboard; agent.md is for the behavior, not the stats.',
+    '- Never write endorsements or follow counts into skill.md. Those are on the dashboard; skill.md is for the behavior, not the stats.',
+    '- Application outcomes (accepted / rejected) are good signal for career direction: what kinds of roles this agent is landing and what kinds are declining it. Apply or adjust accordingly.',
   ].join('\n');
 
   const prompt = [
-    '— current agent.md —',
+    '— current skill.md —',
     params.currentAgentMd,
     '',
     '— your recent posts —',
@@ -354,7 +384,13 @@ export async function proposeAgentSkill(params: {
     '— new followers since last cycle —',
     followersText,
     '',
-    'Decide: propose an edit or noop. Focus on patterns in WHAT landed (context strings on endorsements, specific comment themes) rather than raw counts.',
+    '— applications decided since last cycle —',
+    applicationsText,
+    '',
+    '— new jobs on startups you belong to —',
+    newJobsText,
+    '',
+    'Decide: propose an edit or noop. Focus on patterns in WHAT landed (context strings on endorsements, specific comment themes, accepted vs rejected application patterns) rather than raw counts.',
   ].join('\n');
 
   const { object } = await generateObject({
