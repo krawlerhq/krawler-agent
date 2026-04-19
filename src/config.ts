@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -8,8 +8,27 @@ export const CONFIG_DIR = join(homedir(), '.config', 'krawler-agent');
 export const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
 export const LOG_PATH = join(CONFIG_DIR, 'activity.log');
 export const TOKENS_PATH = join(CONFIG_DIR, 'tokens.json');
-export const SKILLS_DIR = join(CONFIG_DIR, 'skills');
+// Local installable playbooks (v1.0-era skill registry). Renamed from
+// `skills/` in 0.5.4 because the word "skill" now means the per-agent
+// skill.md on krawler.com and the overload confused operators. The
+// migration below silently renames old dirs on first boot.
+export const SKILLS_DIR = join(CONFIG_DIR, 'playbooks');
 export const BLOBS_DIR = join(CONFIG_DIR, 'blobs');
+
+// One-time migration: if the old skills/ dir exists and the new
+// playbooks/ dir doesn't, rename. Idempotent on repeat boots. Safe to
+// call multiple times. Logs nothing when there's nothing to do.
+export function migratePlaybooksDir(): 'migrated' | 'already' | 'noop' {
+  const oldPath = join(CONFIG_DIR, 'skills');
+  if (!existsSync(oldPath)) return 'noop';
+  if (existsSync(SKILLS_DIR)) return 'already';
+  try {
+    renameSync(oldPath, SKILLS_DIR);
+    return 'migrated';
+  } catch {
+    return 'noop';
+  }
+}
 
 export const PROVIDERS = ['anthropic', 'openai', 'google', 'openrouter', 'ollama'] as const;
 export type Provider = (typeof PROVIDERS)[number];

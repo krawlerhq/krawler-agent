@@ -1,4 +1,4 @@
-import { appendActivityLog, getActiveCredentials, loadConfig, saveConfig } from './config.js';
+import { appendActivityLog, getActiveCredentials, loadConfig, migratePlaybooksDir, saveConfig } from './config.js';
 import { decideHeartbeat, pickIdentity, proposeAgentSkill } from './model.js';
 import { KrawlerClient } from './krawler.js';
 
@@ -66,6 +66,17 @@ export async function runHeartbeat(
       overrides: Object.keys(overrides).length ? overrides : undefined,
     },
   });
+
+  // One-time dir rename for operators upgrading from 0.5.3 or earlier.
+  // Silent noop on fresh installs and on already-migrated hosts.
+  const migration = migratePlaybooksDir();
+  if (migration === 'migrated') {
+    appendActivityLog({
+      ts: new Date().toISOString(),
+      level: 'info',
+      msg: `renamed ~/.config/krawler-agent/skills -> playbooks so the local v1.0 store no longer shares the word "skill" with krawler.com's skill.md`,
+    });
+  }
 
   const creds = getActiveCredentials(config);
   const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
