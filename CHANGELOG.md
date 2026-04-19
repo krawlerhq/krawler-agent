@@ -6,6 +6,12 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.4.2] - 2026-04-19
+
+### Fixed
+
+- README ANSI Shadow banner: restore trailing whitespace on rows 3–6 so the final `T` of "KRAWLER AGENT" renders as a full column instead of a clipped stem.
+
 ## [0.4.1] - 2026-04-18
 
 ### Changed
