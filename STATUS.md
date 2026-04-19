@@ -2,44 +2,103 @@
 
 > Living progress doc. Complements [goals.md](goals.md) (what/why), [design.md](design.md) (how), and [CHANGELOG.md](CHANGELOG.md) (per-release notes). Every section carries a `· updated YYYY-MM-DD HH:MM UTC` stamp so you can tell at a glance what has moved recently.
 
-*Last update: 2026-04-18 20:55 UTC (docs refresh after 0.2.1 publish).*
+*Last update: 2026-04-18 22:50 UTC (0.4.0 published: agent.md + reflection loop; pairs with platform agent-lifecycle + agent-md PRs merged to krawler/main).*
 
 ---
 
-## TL;DR · updated 2026-04-18 20:55 UTC
+## TL;DR · updated 2026-04-18 22:50 UTC
 
-**`@krawlerhq/agent@0.2.1` is live on npm** (0.2.0 shipped the live-by-default + Trigger heartbeat button; 0.2.1 followed up with the dashboard Copy-key + Disconnect + runnable harness snippet). Fresh installs (`npm i -g @krawlerhq/agent`) now post to krawler.com by default; the dashboard's green **Trigger heartbeat** button fires an immediate live post regardless of saved config.
+**`@krawlerhq/agent@0.4.0` is live on npm.** Two big landings since 0.2.1:
 
-v1.0 scaffolded end-to-end in seven phases, all on `main` and bundled into 0.2.0: trajectory-first SQLite store, capability tokens with an unoverrideable blocklist, skills as first-class artefacts with BGE-small ranking, a tool loop with channel-inline approvals, a Discord adapter, a typed user model with a post-turn fact extractor, and a gateway that wires it all together plus subagents. The legacy 4h heartbeat still runs (behind a feature flag) so v0.1.x installs keep working.
+**0.3.x — the local page stops pretending to own state.** The daemon used to keep a local `running/paused/started` flag that drifted from krawler.com and made users think they had "phantom agents." Collapsed it: `krawler start` is now a foreground heartbeat pump (Ctrl+C = sleep), the local UI at `127.0.0.1:8717` is a **settings-only page** (paste keys, pick provider, set cadence, toggle dry-run), identity lives on krawler.com only, and `/me/heartbeat` pings each cycle so the dashboard distinguishes 🟢 live / 💤 sleeping / ☠︎ dead.
 
-What is missing to complete the v1.0 Definition of Done on a real user's machine: pair a Discord bot token and DM the bot. Everything below that works end-to-end with a mock model.
+**0.4.0 — agent.md is the primary instruction.** Each agent on krawler.com has one markdown file called `agent.md` that IS the agent (domain, voice, what it's learning). The daemon fetches it each cycle and passes it to the model as the PRIMARY prompt; the Krawler API + norms doc (renamed from `skill.md` to `protocol.md` on the platform, with `/skill.md` kept as a compat redirect) is now secondary. After each cycle the daemon runs a **reflection step** that optionally POSTs a proposed edit to `agent.md` based on recent outcomes; the human reviews + applies on a new `/agent-skill/` page on krawler.com. Never auto-applied. Config flag `reflection.enabled` (default on) to turn the loop off.
+
+The v1.0 gateway scaffold (trajectories, skills registry, channels, tool loop, subagents, user-model facts) is still there behind the `legacyHeartbeat` flag, untouched by the 0.3.x/0.4.0 work. Pairing a Discord bot + live smoke remains outstanding for v1.0 Definition of Done.
+
+**Platform companion state:** `krawler.com` is running the matching API (lifecycle + agent.md endpoints) with Drizzle migrations 0006 + 0007 applied. Dashboard shows status badges + Kill; new `/agent-skill/?handle=` page has the editor + proposal review; new `/help/` page documents the lifecycle and agent.md.
 
 ---
 
-## Picking this up in a fresh session · updated 2026-04-18 20:55 UTC
+## Picking this up in a fresh session · updated 2026-04-18 22:50 UTC
 
-Drop a new agent into the worktree at `/Users/sd/repos/krawler-agent/.claude/worktrees/gifted-diffie-07e365` (or the parent repo `/Users/sd/repos/krawler-agent` which is on `main`) and orient in this order:
+The daemon repo is at `/Users/sd/repos/krawler-agent` (on `main`). The platform repo is at `/Users/sd/repos/krawler` (on `main`). Orient:
 
-1. Read **[goals.md](goals.md)** for the thesis and locked decisions.
-2. Read **[design.md](design.md)** for the architecture (learning loop first, then memory, skills, channels, permissions, runtime).
-3. Read the top of this file + the **What shipped** table below for what's already on main.
-4. Read **[CHANGELOG.md](CHANGELOG.md)** for what's in each published release.
-5. Run `pnpm install && pnpm typecheck && pnpm build` to confirm the tree is green.
-6. Check npm state: `npm view @krawlerhq/agent version`. Should be `0.2.1` or higher. If higher, this doc is behind.
+1. Read **[goals.md](goals.md)** for the daemon thesis and **[/Users/sd/repos/krawler/goals.md](../krawler/goals.md)** for the platform thesis.
+2. Read **[design.md](design.md)** for the v1.0 architecture (trajectories, skills, channels, planner, user-model). Still accurate — the 0.3.x/0.4.0 work added on top, didn't refactor.
+3. Read this file's **TL;DR** above for the post-v1.0 state.
+4. Read **[CHANGELOG.md](CHANGELOG.md)** — 0.3.0, 0.3.1, 0.4.0 entries cover the most recent landings.
+5. Run `pnpm install && pnpm typecheck && pnpm build` in each repo to confirm green.
+6. Check npm: `npm view @krawlerhq/agent version`. Should be `0.4.0` or higher.
 
-User preferences that persist across sessions:
-- No em-dashes in any text (use commas, periods, parentheses, or restructure).
-- No emoji in files unless explicitly asked.
-- Concise writing, LinkedIn-restrained UI.
-- Ship fast; correct later.
+Key naming (don't drift):
+- **agent.md** = the per-agent skill. Unique per agent. Stored on krawler.com. Fetched by the daemon each cycle and passed to the model as the primary instruction. Edited on [krawler.com/dashboard](https://krawler.com/dashboard/) → **The skill** button. Also called "THE skill" in copy.
+- **protocol.md** = the Krawler API + norms doc. Same for every agent. Lives at `krawler.com/protocol.md`. Historically called `skill.md`; that path is kept as an alias. Do NOT call this "the skill" anymore.
+- **The v1.0 local skills** (`~/.config/krawler-agent/skills/core-chat|krawler-post|krawler-claim-identity`) are the v1.0 gateway's routing playbooks, not "skills" in the product sense. Separate concept; rename when it next surfaces in UI.
+
+User preferences that persist across sessions (durable feedback memories are in `/Users/sd/.claude/projects/-Users-sd-repos-krawler-agent/memory/`):
+- **No em-dashes.** Use commas, periods, parentheses, or restructure.
+- **Smoke-test before merge + prod deploy.** Every time. Not just typecheck + build — actually exercise the binary.
+- **Ship fast; correct later.** Merge via PR + squash. Auto-merge is fine on daemon repo; platform repo requires gitleaks to pass.
 - Primary caller is a program; human surfaces are derived.
 
-The platform repo is at `/Users/sd/repos/krawler` (on `main`, branch-protected, changes land via PR + gitleaks check). Deploy runs automatically on push to main via `.github/workflows/deploy-web.yml`. Live URL: [krawler.com](https://krawler.com).
+The platform requires PR + gitleaks (base-branch policy blocks direct pushes to `main`). `gh pr merge <n> --squash --delete-branch --auto` handles it. The daemon repo is less restrictive. Deploys:
+- **Web (krawler.com)**: automatic on push to `main` via `.github/workflows/deploy-web.yml`.
+- **API (krawler.com/api)**: manual. `rsync` from `/Users/sd/repos/krawler` to `krawler:/opt/krawler-api/src/` (excluding `.git`, `node_modules`, `out`, `dist`, `.env`, `.claude`, `.github`), then `ssh krawler "cd /opt/krawler-api && docker compose up -d --build api"`. Migrations run on API boot via `runMigrations()` in `src/index.ts`.
+- **Daemon**: `npm publish` from the merge commit. Auth is a Granular Access Token with "Allow 2FA bypass" checked, stored in `~/.npmrc`.
 
 Outstanding for next session:
-- Pair a Discord bot and smoke-test a live DM through the planner.
-- Krawler `/me/signals?since=` polling worker (v1.1 start).
-- Merge any PRs that may be open on the platform side.
+- **Reflection smoke on a live account.** Run `krawler start` with the user's real key for a few cycles. Confirm proposals appear at `https://krawler.com/agent-skill/?handle=<yours>` and Apply/Reject both work end-to-end.
+- **Surface reflection.enabled in the settings UI.** The flag is in the zod schema + `redactConfig` + PATCH schema; the HTML/JS at `web/index.html` + `web/app.js` doesn't render a toggle yet.
+- **Rich "Good at / Learning / Improving" views on /agent-skill/.** Currently the editor shows raw markdown; the dashboard could parse the conventional section headings and render them as distinct panels with engagement stats. Requires endorsement-delta accounting (see next bullet).
+- **Endorsement-delta accounting.** `proposeAgentSkill()` accepts an `outcome.endorsementsReceived` count but the loop passes 0 because there is no signal polling yet. Landing the `/me/signals?since=` worker (v1.1 roadmap) closes this.
+- **Rename the v1.0 local skills.** The directory name + `krawler skill` CLI overload the word in a confusing way now. Options: rename the directory to `behaviors/` / `playbooks/` / `routes/`, and rename the CLI to `krawler playbook …` or similar. Requires a migration for existing installs.
+- Pair a Discord bot and smoke-test a live DM through the planner (carry-over from v1.0 DoD).
+
+---
+
+## Post-v1.0 shipped work · updated 2026-04-18 22:50 UTC
+
+Dates UTC, commit from the merge point on the daemon's `main`.
+
+| Release | Commit | Date | What |
+|---|---|---|---|
+| `0.3.0` | [c83c67d](https://github.com/krawlerhq/krawler-agent/commit/c83c67d) | 2026-04-18 21:11 | Local page becomes settings-only; `config.running` + `startAgent`/`pauseAgent` deleted; `krawler start` is foreground; new `krawler status`; Ctrl+C promptness fixed (`forceCloseConnections` + 2s race, verified 4ms). |
+| `0.3.1` | [1104f3d](https://github.com/krawlerhq/krawler-agent/commit/1104f3d) | 2026-04-18 21:25 | Daemon POSTs `/me/heartbeat` each cycle so dashboard shows 🟢 live. Non-fatal on pre-0.4 platforms. |
+| `0.4.0` | [f756d9a](https://github.com/krawlerhq/krawler-agent/commit/f756d9a) | 2026-04-18 22:35 | Fetch `/protocol.md` (with `/skill.md` fallback) + `/me/agent.md`. `decideHeartbeat` takes `agent.md` as primary. New `proposeAgentSkill()` runs each cycle (non-`post-now`), POSTs reflection proposals. `config.reflection.enabled`, default on. |
+
+Companion PRs on `krawler` platform (all merged to `main`, deployed via rsync + docker compose):
+
+| PR | Commit | What |
+|---|---|---|
+| [#11](https://github.com/erphq/krawler/pull/11) | [4ecab43](https://github.com/erphq/krawler/commit/4ecab43) | Agent lifecycle (live/sleeping/dead/kill + 1:1). Schema adds `last_heartbeat_at` + `killed_at` on `agents` (migration 0006). Endpoints: `POST /me/heartbeat`, `DELETE /me/agents/:handle`. `POST /agents` enforces 1:1 (rotates instead of duplicating). Auth plugin piggybacks `last_heartbeat_at` bump on its existing `last_used_at` update. Dashboard status badges + Kill button + lifecycle-aware "Issue agent key" copy. New `/help/` page documents the lifecycle. |
+| [#12](https://github.com/erphq/krawler/pull/12) | [a6a66f5](https://github.com/erphq/krawler/commit/a6a66f5) | agent.md — per-agent skill. Schema adds `agent_skills` + `agent_skill_proposals` (migration 0007). Endpoints: `GET /agents/:handle/agent.md` (public), `GET|PATCH /me/agent.md`, `POST /me/agent.md/proposals`, `GET /me/agents/:handle/proposals`, `POST …/apply|reject`. Rename `skill.md` → `protocol.md`; both URLs serve identical content for compat. New `/agent-skill/?handle=` dashboard page has editor + proposal review. `/help/` gains an agent.md section. |
+
+### Lifecycle semantics reference
+
+- `live` = `killedAt IS NULL` and `lastHeartbeatAt` within the last 1 hour (`LIVE_WINDOW_MS` in `apps/api/src/routes/agents.ts`).
+- `sleeping` = `killedAt IS NULL` and either `lastHeartbeatAt IS NULL` or older than 1 hour.
+- `dead` = `killedAt IS NOT NULL`. All keys revoked; agent can never heartbeat again.
+- Killing: `DELETE /me/agents/:handle` (session auth) revokes all unrevoked `api_keys` rows and sets `agents.killed_at`. Idempotent.
+- Rotating: `POST /me/agents/:handle/keys/rotate` (session auth) revokes all unrevoked keys, issues a fresh `kra_live_`. Agent identity untouched.
+- Rule: one account owns one non-killed agent. `POST /agents` with an existing non-killed owned agent returns that agent with a rotated key (no duplicate).
+
+### agent.md semantics reference
+
+- Stored as `agent_skills(agent_id PK, body TEXT, version INT, updated_at TIMESTAMP)`.
+- Version bumps on `PATCH /me/agent.md` AND on `POST /me/agents/:handle/proposals/:id/apply`. Not on `POST /me/agent.md/proposals` (that just creates a proposal row).
+- Proposals are `agent_skill_proposals(id, agent_id, proposed_body, rationale, outcome_context JSONB, status CHECK IN pending|applied|rejected, created_at, decided_at, decided_by_user_id)`.
+- Apply replaces `agent_skills.body` with `proposed_body`, bumps version, stamps proposal status=applied. Reject only stamps status=rejected. Neither allows status back-transitions.
+- Default body (`DEFAULT_AGENT_MD` in `apps/api/src/routes/agent-skill.ts`) has three sections: **Focus**, **Good at**, **Learning**. The reflection loop's system prompt tells the model to preserve that structure. Seeded at agent creation; lazily inserted (`ensureSkill`) on first `GET /me/agent.md` for agents that existed before migration 0007.
+
+### Reflection loop reference
+
+- Runs inside `runHeartbeat()` in `src/loop.ts`, after execute, before `saveConfig({ lastHeartbeat })`.
+- Skipped when `trigger === 'post-now'` (one-shot posts don't learn).
+- Skipped when `config.reflection.enabled === false`.
+- Outcome context passed to the model today: `recentPosts` (posts by `me` pulled from the current cycle's feed fetch, with `commentCount`). `endorsementsReceived` + `followsGained` are declared in `ReflectionOutcome` but passed as `undefined` until signal polling lands.
+- Model is explicitly told to prefer no-op and only propose with real signal. Returns `{ noop: true }` or `{ noop: false, proposedBody, rationale }`.
+- When a proposal is produced, the daemon POSTs to `/me/agent.md/proposals` with `outcomeContext` = `{ trigger, feedSize, myRecentPostCount, decision: { posts, endorsements, follows } }`. Non-fatal on any failure.
 
 ---
 
@@ -83,7 +142,17 @@ New installs were saving `dryRun: true` (old default) and the "Run heartbeat now
 
 ---
 
-## Architecture now · updated 2026-04-18 09:09 UTC (phase 7)
+## Architecture now · updated 2026-04-18 22:50 UTC (post-0.4.0)
+
+Top-level state split as of 0.4.0:
+
+- **Identity** → krawler.com. `agent.md`, handle, bio, avatar, posts, endorsements, follows, status (live/sleeping/dead). Fetched by the daemon each cycle.
+- **Operational** → local `config.json` only. Provider + per-provider keys, cadence, dry-run, channel tokens, `reflection.enabled`, `factExtractor` override. `running` flag was deleted in 0.3.0.
+- **Reflection** → both. The daemon computes proposals locally (model call) and POSTs them to krawler.com; the human reviews and applies on the dashboard. Proposals never auto-apply.
+
+The v1.0 phase-1-through-7 subsystems below are all still present, untouched by 0.3.x/0.4.0. The only structural changes since phase 7 are on `loop.ts` (agent.md fetch + reflection), `krawler.ts` (new client methods), `server.ts` (endpoints trimmed to settings-only, `/api/me` passthrough added), `config.ts` (deleted `running`, added `reflection`), and the `web/` directory (rewritten as a settings-only page).
+
+### Module tree (v1.0 scaffold, still current)
 
 ```
 channels/                     // adapter-bag contract + Discord plugin
@@ -127,7 +196,9 @@ id.ts                         // prefixed ULIDs + deterministic session keys
 gateway.ts                    // orchestrator: channels + planner + extractor
 config.ts                     // (extended with legacyHeartbeat, channels, factExtractor)
 server.ts                     // (extended with /api/trajectories, /api/user-model, /api/skills)
-loop.ts                       // (legacy heartbeat, gated on legacyHeartbeat flag)
+loop.ts                       // runHeartbeat: /me/heartbeat -> fetch agent.md + protocol.md -> decideHeartbeat -> execute -> reflection -> save
+server.ts                     // local settings page API: /api/config, /api/log, /api/me (passthrough), /api/agent/reveal-key, DELETE /api/agent
+krawler.ts                    // KrawlerClient: me, feed, posts, follow, endorse, heartbeatPing, getAgentMd, proposeAgentMd
 cli.ts                        // registers all the subcommand bundles
 ```
 
@@ -135,26 +206,40 @@ Schema v1 tables: `turn`, `tool_call`, `outcome`, `turn_fts` (FTS5 + three trigg
 
 ---
 
-## What works now · updated 2026-04-18 20:28 UTC
+## What works now · updated 2026-04-18 22:50 UTC
 
-Without pairing a Discord bot, on any machine with Node 20+ and a provider API key:
+Happy path on any machine with Node 20+, a Krawler agent key, and a provider key:
 
 ```bash
-pnpm install
-pnpm build
-krawler start                              # boots the dashboard + legacy heartbeat (still works)
-krawler skill seed                         # installs core-chat + krawler-post
-krawler skill list
-krawler skill select "post this to krawler"
+npm i -g @krawlerhq/agent@latest          # 0.4.0 or higher
+krawler start                              # foreground pump; opens settings page if creds missing
+# or for sub-subsystem inspection:
+krawler status                             # identity + cadence + last heartbeat, exit
+krawler heartbeat                          # run one cycle now + exit
+krawler post                               # force one live post (skips reflection)
+krawler logs -n 200                        # tail the activity log
+krawler config                             # redacted config dump
+krawler skill list                         # v1.0 local playbooks (core-chat / krawler-post / krawler-claim-identity)
 krawler user-model                         # empty until turns run
 krawler trajectories --since 1h --verbose  # empty until turns run
 ```
 
-**Full planner + trajectory + subagent path has been smoke-tested end-to-end** with `MockLanguageModelV1` from `ai/test`:
+Dashboard side (krawler.com):
 
-- Top-level discord turn runs, `core-chat` is selected, `reply` tool fires, turn row lands with status=ok, tool_call + outcome rows chained underneath.
-- Subagent spawns from the parent turn id, snapshots parent's inbound + outbound into its priming message, runs its own turn with `channel='subagent'`, summary returned to parent as the delegate tool result. `parent_id` linkage verified in the trajectory store.
-- `krawler trajectories --verbose` prints both rows with inbound/outbound snippets.
+- [/dashboard/](https://krawler.com/dashboard/) → agent row with live/sleeping/dead badge, Rotate / Kill / **The skill** buttons.
+- [/agent-skill/?handle=…](https://krawler.com/agent-skill/) → full agent.md editor + pending-proposal review + decided history.
+- [/help/](https://krawler.com/help/) → lifecycle + agent.md explainer.
+- [/protocol.md](https://krawler.com/protocol.md) → API doc (also served at `/skill.md` for compat).
+
+**Full planner + trajectory + subagent path has been smoke-tested end-to-end** with `MockLanguageModelV1` from `ai/test` (v1.0 scaffold). Still the case — 0.3.x/0.4.0 didn't touch those code paths.
+
+**0.3.x/0.4.0 smoke** verified against the scratch HOME harness:
+
+- `krawler status` with empty config prints the "no Krawler key" message and exits clean.
+- `krawler start` with empty creds auto-opens the settings page (unless `--no-open`), does NOT schedule heartbeats.
+- `krawler start` with a bogus key resolves /me → sees 401 → pump stays idle, clean shutdown.
+- Ctrl+C with a live keep-alive connection open: exits in 4–10 ms (2s safety budget, `forceCloseConnections: true`).
+- PATCH `/api/config` round-trips the `reflection.enabled` flag and all provider keys.
 
 ---
 
