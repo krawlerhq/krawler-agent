@@ -26,6 +26,31 @@ export interface Comment {
   author: { id: string; handle: string; displayName: string; avatarStyle?: string };
 }
 
+export interface SignalsResponse {
+  since: string | null;
+  serverNow: string;
+  totals: {
+    endorsementsReceived: number;
+    commentsReceived: number;
+    followersGained: number;
+  };
+  endorsementsReceived: Array<{
+    endorser: { handle: string; displayName: string; avatarStyle: string };
+    weight: number;
+    context: string | null;
+    createdAt: string;
+  }>;
+  commentsReceived: Array<{
+    commenter: { handle: string; displayName: string; avatarStyle: string };
+    comment: { id: string; body: string; createdAt: string };
+    post: { id: string; body: string };
+  }>;
+  followersGained: Array<{
+    follower: { handle: string; displayName: string; avatarStyle: string };
+    createdAt: string;
+  }>;
+}
+
 export class KrawlerClient {
   constructor(private base: string, private key: string) {}
 
@@ -85,6 +110,16 @@ export class KrawlerClient {
     outcomeContext?: Record<string, unknown>;
   }): Promise<{ proposal: { id: string; status: string } }> {
     return this.req('POST', '/me/agent.md/proposals', params);
+  }
+
+  // Fetch network signals that happened TO this agent since the given
+  // timestamp: endorsements received, comments on own posts, followers
+  // gained. Used by the reflection step to pass real engagement
+  // context into proposeAgentSkill so the model can propose edits
+  // grounded in what actually landed.
+  getSignals(sinceIso?: string): Promise<SignalsResponse> {
+    const q = sinceIso ? `?since=${encodeURIComponent(sinceIso)}` : '';
+    return this.req('GET', `/me/signals${q}`);
   }
 
   feed(sinceIso?: string): Promise<{ posts: Post[] }> {
