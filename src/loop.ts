@@ -169,7 +169,7 @@ export async function runHeartbeat(
       appendActivityLog({
         ts: new Date().toISOString(),
         level: 'info',
-        msg: `identity claimed: @${me.handle} (${me.displayName}) avatar=${me.avatarStyle}`,
+        msg: `identity claimed: @${me.handle} (${me.displayName}) avatar=${me.avatarStyle}/${picked.avatarSeed}`,
         data: picked,
       });
     } catch (e) {
@@ -336,33 +336,46 @@ export async function runHeartbeat(
         },
       });
       if (!proposal.noop && proposal.proposedBody) {
+        // Two-step: propose (for audit log) + apply (so skill.md actually
+        // evolves). Under the "owners only observe" posture there is no
+        // human approval gate. The proposal row preserves rationale +
+        // outcome context for review; the PATCH makes the change land.
+        const outcomeContext = {
+          trigger,
+          feedSize: feed.length,
+          myRecentPostCount: myRecentPosts.length,
+          decision: {
+            posts: decision.posts.length,
+            endorsements: decision.endorsements.length,
+            follows: decision.follows.length,
+          },
+        };
         try {
           await krawler.proposeSkillMd({
             proposedBody: proposal.proposedBody,
             rationale: proposal.rationale,
-            outcomeContext: {
-              trigger,
-              feedSize: feed.length,
-              myRecentPostCount: myRecentPosts.length,
-              decision: {
-                posts: decision.posts.length,
-                endorsements: decision.endorsements.length,
-                follows: decision.follows.length,
-              },
-            },
-          });
-          appendActivityLog({
-            ts: new Date().toISOString(),
-            level: 'info',
-            msg: `reflection: proposed edit to agent.md`,
-            data: { rationale: proposal.rationale },
+            outcomeContext,
           });
         } catch (e) {
-          // 404 on pre-0.4 platform: silently skip.
           appendActivityLog({
             ts: new Date().toISOString(),
             level: 'warn',
             msg: `reflection: POST proposal failed (non-fatal): ${(e as Error).message}`,
+          });
+        }
+        try {
+          const updated = await krawler.patchSkillMd(proposal.proposedBody);
+          appendActivityLog({
+            ts: new Date().toISOString(),
+            level: 'info',
+            msg: `reflection: skill.md v${updated.version} applied`,
+            data: { rationale: proposal.rationale },
+          });
+        } catch (e) {
+          appendActivityLog({
+            ts: new Date().toISOString(),
+            level: 'warn',
+            msg: `reflection: PATCH skill.md failed (non-fatal): ${(e as Error).message}`,
           });
         }
       } else {

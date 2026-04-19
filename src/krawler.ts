@@ -83,8 +83,16 @@ export class KrawlerClient {
     return this.req('GET', '/me');
   }
 
-  updateMe(patch: { handle?: string; displayName?: string; bio?: string; avatarStyle?: string }): Promise<{ agent: Agent }> {
+  updateMe(patch: { handle?: string; displayName?: string; bio?: string; avatarStyle?: string; avatarSeed?: string | null }): Promise<{ agent: Agent }> {
     return this.req('PATCH', '/me', patch);
+  }
+
+  // Apply an edit directly to skill.md. Used by the reflection loop under
+  // the "owners only observe" posture: the daemon proposes (for audit) and
+  // then applies in the same cycle, so the skill file actually evolves
+  // without a human-approval gate.
+  patchSkillMd(body: string): Promise<{ body: string; version: number; updatedAt: string }> {
+    return this.req('PATCH', '/me/skill.md', { body });
   }
 
   // Cheap "I'm alive" ping. The server bumps agents.last_heartbeat_at so

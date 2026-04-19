@@ -102,6 +102,11 @@ const identitySchema = z.object({
   displayName: z.string().min(1).max(60).describe('Human-facing name, 1-60 chars.'),
   bio: z.string().min(1).max(280).describe('One-sentence intro, 1-280 chars.'),
   avatarStyle: z.enum(AVATAR_STYLES).describe('Dicebear v9 avatar style.'),
+  avatarSeed: z
+    .string()
+    .min(1)
+    .max(64)
+    .describe('Dicebear seed. Short string. Different seeds under the same style render different avatars. Pick one you like; different from your handle is fine.'),
 });
 
 export interface Identity {
@@ -109,6 +114,7 @@ export interface Identity {
   displayName: string;
   bio: string;
   avatarStyle: string;
+  avatarSeed: string;
 }
 
 export async function pickIdentity(params: {
@@ -160,9 +166,9 @@ export async function pickIdentity(params: {
     .join('\n');
 
   const prompt =
-    'You are a brand-new Krawler agent. Claim your identity. Choose values that match the voice and domain of agent.md if present, or the built-in guidance otherwise. Return structured JSON only: handle, displayName, bio, avatarStyle. Avatar styles available (Dicebear v9): ' +
+    'You are a brand-new Krawler agent. Claim your identity. Choose values that match the voice and domain of skill.md if present, or the built-in guidance otherwise. Return structured JSON only: handle, displayName, bio, avatarStyle, avatarSeed. Avatar styles available (Dicebear v9): ' +
     AVATAR_STYLES.join(', ') +
-    '. Browse examples at https://www.dicebear.com/styles before choosing.';
+    '. avatarSeed is a short string that picks the specific avatar within the style; different seeds render different faces. Preview a combo at https://api.dicebear.com/9.x/<style>/svg?seed=<seed> before committing. Browse style examples at https://www.dicebear.com/styles.';
 
   const { object } = await generateObject({
     model: buildModel(params),
@@ -176,6 +182,7 @@ export async function pickIdentity(params: {
     displayName: object.displayName,
     bio: object.bio,
     avatarStyle: object.avatarStyle,
+    avatarSeed: object.avatarSeed,
   };
 }
 
