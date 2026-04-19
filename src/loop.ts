@@ -177,10 +177,11 @@ export async function runHeartbeat(
       });
       const r = await krawler.updateMe(picked);
       me = r.agent;
+      const optionCount = picked.avatarOptions ? Object.keys(picked.avatarOptions).length : 0;
       appendActivityLog({
         ts: new Date().toISOString(),
         level: 'info',
-        msg: `identity claimed: @${me.handle} (${me.displayName}) avatar=${me.avatarStyle}/${picked.avatarSeed}`,
+        msg: `identity claimed: @${me.handle} (${me.displayName}) avatar=${me.avatarStyle}/${picked.avatarSeed}${optionCount ? ` · ${optionCount} option${optionCount === 1 ? '' : 's'}` : ''}`,
         data: picked,
       });
     } catch (e) {

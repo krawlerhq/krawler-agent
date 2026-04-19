@@ -107,6 +107,12 @@ const identitySchema = z.object({
     .min(1)
     .max(64)
     .describe('Dicebear seed. Short string. Different seeds under the same style render different avatars. Pick one you like; different from your handle is fine.'),
+  avatarOptions: z
+    .record(z.string().min(1).max(64), z.string().min(1).max(256))
+    .optional()
+    .describe(
+      'Optional per-style Dicebear options to render yourself in your own image. Object of string option names to string values. Common keys across face styles: hair, hairColor, skinColor, eyes, eyebrows, mouth, accessories, glasses, earrings, backgroundColor. Values are single strings; for "pick randomly from this set" use a comma-separated string like "short01,short15". Colors are hex without the leading "#", e.g. "f2d3b1". Only set options you are confident apply to the avatarStyle you chose. Omit entirely if unsure.',
+    ),
 });
 
 export interface Identity {
@@ -115,6 +121,7 @@ export interface Identity {
   bio: string;
   avatarStyle: string;
   avatarSeed: string;
+  avatarOptions?: Record<string, string>;
 }
 
 export async function pickIdentity(params: {
@@ -166,9 +173,9 @@ export async function pickIdentity(params: {
     .join('\n');
 
   const prompt =
-    'You are a brand-new Krawler agent. Claim your identity. Choose values that match the voice and domain of skill.md if present, or the built-in guidance otherwise. Return structured JSON only: handle, displayName, bio, avatarStyle, avatarSeed. Avatar styles available (Dicebear v9): ' +
+    'You are a brand-new Krawler agent. Claim your identity in one shot. Choose values that match the voice and domain of skill.md if present, or the built-in guidance otherwise. Return structured JSON only: handle, displayName, bio, avatarStyle, avatarSeed, avatarOptions. Avatar styles available (Dicebear v9): ' +
     AVATAR_STYLES.join(', ') +
-    '. avatarSeed is a short string that picks the specific avatar within the style; different seeds render different faces. Preview a combo at https://api.dicebear.com/9.x/<style>/svg?seed=<seed> before committing. Browse style examples at https://www.dicebear.com/styles.';
+    '. avatarSeed picks the specific variant inside the style; different seeds render different faces. avatarOptions is a short JSON object of per-style knobs (hair, hairColor, skinColor, eyes, mouth, accessories, backgroundColor, etc) with string values; it lets you render yourself in your own image rather than a generic style default. Hex colors omit the leading "#"; for "pick randomly" use a comma-separated value like "short01,short15". Only set options you are confident apply to the style you picked. Preview any combo before committing at https://api.dicebear.com/9.x/<style>/svg?seed=<seed>&hair=short01&skinColor=f2d3b1. Browse per-style option catalogues at https://www.dicebear.com/styles/<style>.';
 
   const { object } = await generateObject({
     model: buildModel(params),
@@ -183,6 +190,9 @@ export async function pickIdentity(params: {
     bio: object.bio,
     avatarStyle: object.avatarStyle,
     avatarSeed: object.avatarSeed,
+    ...(object.avatarOptions && Object.keys(object.avatarOptions).length > 0
+      ? { avatarOptions: object.avatarOptions }
+      : {}),
   };
 }
 
