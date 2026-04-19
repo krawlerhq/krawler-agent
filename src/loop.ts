@@ -2,7 +2,8 @@ import { appendActivityLog, getActiveCredentials, loadConfig, migratePlaybooksDi
 import { currentProfileName, withProfile } from './profile-context.js';
 import { decideHeartbeat, pickIdentity, proposeAgentSkill } from './model.js';
 import { KrawlerClient } from './krawler.js';
-import { fetchInstalledSkillsMd } from './skill-refs.js';
+import { fetchInstalledSkillsMd, writeLocalSkillBody } from './skill-refs.js';
+import type { InstalledSkillEntry } from './skill-refs.js';
 
 // Default agent.md used when krawler.com doesn't have one for this agent
 // yet (e.g. pre-0.4 platform, or a brand-new agent that hasn't been seeded
@@ -162,9 +163,11 @@ export async function runHeartbeat(
   // (the reflection loop may edit it; a future command can PR it back
   // upstream). See src/skill-refs.ts for layout + design notes.
   let installedSkillsMd = '';
+  let installedSkillEntries: InstalledSkillEntry[] = [];
   try {
     const r = await fetchInstalledSkillsMd(me.skillRefs);
     installedSkillsMd = r.markdown;
+    installedSkillEntries = r.entries;
     if (r.newlyInstalled.length > 0) {
       appendActivityLog({
         ts: new Date().toISOString(),
@@ -450,10 +453,6 @@ export async function runHeartbeat(
         },
       });
       if (!proposal.noop && proposal.proposedBody) {
-        // Two-step: propose (for audit log) + apply (so skill.md actually
-        // evolves). Under the "owners only observe" posture there is no
-        // human approval gate. The proposal row preserves rationale +
-        // outcome context for review; the PATCH makes the change land.
         const outcomeContext = {
           trigger,
           feedSize: feed.length,
@@ -464,33 +463,73 @@ export async function runHeartbeat(
             follows: decision.follows.length,
           },
         };
-        try {
-          await krawler.proposeSkillMd({
-            proposedBody: proposal.proposedBody,
-            rationale: proposal.rationale,
-            outcomeContext,
-          });
-        } catch (e) {
-          appendActivityLog({
-            ts: new Date().toISOString(),
-            level: 'warn',
-            msg: `reflection: POST proposal failed (non-fatal): ${(e as Error).message}`,
-          });
-        }
-        try {
-          const updated = await krawler.patchSkillMd(proposal.proposedBody);
-          appendActivityLog({
-            ts: new Date().toISOString(),
-            level: 'info',
-            msg: `reflection: skill.md v${updated.version} applied`,
-            data: { rationale: proposal.rationale },
-          });
-        } catch (e) {
-          appendActivityLog({
-            ts: new Date().toISOString(),
-            level: 'warn',
-            msg: `reflection: PATCH skill.md failed (non-fatal): ${(e as Error).message}`,
-          });
+        const target = proposal.target ?? 'agent_md';
+        if (target === 'agent_md') {
+          // Two-step for agent.md: propose (for audit log) + apply (so
+          // skill.md on the platform actually evolves). No human-approval
+          // gate under the "owners only observe" posture; the proposal
+          // row preserves rationale + outcome context for review.
+          try {
+            await krawler.proposeSkillMd({
+              proposedBody: proposal.proposedBody,
+              rationale: proposal.rationale,
+              outcomeContext,
+            });
+          } catch (e) {
+            appendActivityLog({
+              ts: new Date().toISOString(),
+              level: 'warn',
+              msg: `reflection: POST proposal failed (non-fatal): ${(e as Error).message}`,
+            });
+          }
+          try {
+            const updated = await krawler.patchSkillMd(proposal.proposedBody);
+            appendActivityLog({
+              ts: new Date().toISOString(),
+              level: 'info',
+              msg: `reflection: agent.md v${updated.version} applied`,
+              data: { rationale: proposal.rationale },
+            });
+          } catch (e) {
+            appendActivityLog({
+              ts: new Date().toISOString(),
+              level: 'warn',
+              msg: `reflection: PATCH skill.md failed (non-fatal): ${(e as Error).message}`,
+            });
+          }
+        } else {
+          // target === 'installed_skill': edit the local SKILL.md for one
+          // of this agent's installed skills. No server round-trip: the
+          // local copy is authoritative until/unless the owner PRs it back
+          // upstream via the (future) `krawler skill pr` command. We
+          // validate the slug against the entries from this cycle's
+          // resolve so the model can't poison an arbitrary path.
+          const slug = proposal.targetSlug;
+          const known = installedSkillEntries.find((e) => e.slug === slug);
+          if (!slug || !known) {
+            appendActivityLog({
+              ts: new Date().toISOString(),
+              level: 'warn',
+              msg: `reflection: installed-skill edit rejected (slug "${slug ?? 'none'}" does not match any installed skill this cycle)`,
+              data: { slug, rationale: proposal.rationale },
+            });
+          } else {
+            const ok = writeLocalSkillBody(slug, proposal.proposedBody);
+            if (ok) {
+              appendActivityLog({
+                ts: new Date().toISOString(),
+                level: 'info',
+                msg: `reflection: installed skill "${slug}" locally edited`,
+                data: { rationale: proposal.rationale, origin: known.origin },
+              });
+            } else {
+              appendActivityLog({
+                ts: new Date().toISOString(),
+                level: 'warn',
+                msg: `reflection: could not write local SKILL.md for "${slug}" (disk error)`,
+              });
+            }
+          }
         }
       } else {
         appendActivityLog({
