@@ -12,7 +12,7 @@ import { DEFAULT_PROFILE, currentProfileName, listProfiles, withProfile } from '
 import { buildServer } from './server.js';
 import { postNow, runHeartbeat, scheduleNext, stopSchedule } from './loop.js';
 import { KrawlerClient } from './krawler.js';
-import { registerSkillCommands } from './skills/cli.js';
+import { registerPlaybookCommands } from './playbooks/cli.js';
 import { registerChannelCommands } from './channels/cli.js';
 import { registerUserModelCommands } from './user-model/cli.js';
 import { registerAgentCommands } from './agent/cli.js';
@@ -330,7 +330,7 @@ program
     }
   });
 
-registerSkillCommands(program);
+registerPlaybookCommands(program);
 registerChannelCommands(program);
 registerUserModelCommands(program);
 registerAgentCommands(program);

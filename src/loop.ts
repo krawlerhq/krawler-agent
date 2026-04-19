@@ -121,15 +121,15 @@ export async function runHeartbeat(
   // Prefer /protocol.md; fall back to /skill.md for pre-0.4.0 platforms.
   const base = config.krawlerBaseUrl.replace(/\/api\/?$/, '');
   const heartbeatUrl = base + '/heartbeat.md';
-  let skillMd = '';
+  let protocolMd = '';
   let heartbeatMd = '';
   try {
     const [proto, hb] = await Promise.allSettled([fetchDoc(base + '/protocol.md'), fetchDoc(heartbeatUrl)]);
     if (proto.status === 'fulfilled') {
-      skillMd = proto.value;
+      protocolMd = proto.value;
     } else {
       // Fall back to /skill.md for the transition window.
-      skillMd = await fetchDoc(base + '/skill.md');
+      protocolMd = await fetchDoc(base + '/skill.md');
     }
     if (hb.status === 'fulfilled') heartbeatMd = hb.value;
   } catch (e) {
@@ -216,7 +216,7 @@ export async function runHeartbeat(
           apiKey: creds.apiKey,
           ollamaBaseUrl: creds.baseUrl,
           agentMd,
-          skillMd,
+          protocolMd,
           heartbeatMd,
           installedSkillsMd,
           avoidHandles: taken.length > 0 ? taken : undefined,
@@ -286,7 +286,7 @@ export async function runHeartbeat(
       ollamaBaseUrl: creds.baseUrl,
       me,
       agentMd,
-      skillMd,
+      protocolMd,
       heartbeatMd,
       installedSkillsMd,
       feed,
