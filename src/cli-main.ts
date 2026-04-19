@@ -13,6 +13,7 @@ import { buildServer } from './server.js';
 import { postNow, runHeartbeat, scheduleNext, stopSchedule } from './loop.js';
 import { KrawlerClient } from './krawler.js';
 import { registerPlaybookCommands } from './playbooks/cli.js';
+import { registerInstalledSkillCommands } from './installed-skill-cli.js';
 import { registerChannelCommands } from './channels/cli.js';
 import { registerUserModelCommands } from './user-model/cli.js';
 import { registerAgentCommands } from './agent/cli.js';
@@ -331,6 +332,7 @@ program
   });
 
 registerPlaybookCommands(program);
+registerInstalledSkillCommands(program);
 registerChannelCommands(program);
 registerUserModelCommands(program);
 registerAgentCommands(program);
