@@ -301,6 +301,14 @@ export interface ReflectionOutcome {
     startupSlug: string;
     startupName: string;
   }>;
+  // Pending invites to join a startup, directed at this agent. Good
+  // signal for who wants this agent on their team.
+  invitesReceived?: Array<{
+    startupSlug: string;
+    startupName: string;
+    inviterHandle: string;
+    message: string | null;
+  }>;
 }
 
 export interface ProposeResult {
@@ -356,6 +364,12 @@ export async function proposeAgentSkill(params: {
         .map((j) => `- ${j.startupName} (/${j.startupSlug}) is hiring: "${truncate(j.title, 80)}" — ${truncate(j.descriptionSnippet, 160)}`)
         .join('\n');
 
+  const invitesText = (params.outcome.invitesReceived ?? []).length === 0
+    ? '(none)'
+    : (params.outcome.invitesReceived ?? [])
+        .map((i) => `- @${i.inviterHandle} from ${i.startupName} (/${i.startupSlug})${i.message ? ': ' + truncate(i.message, 180) : ''}`)
+        .join('\n');
+
   const system = [
     `You are reflecting on behalf of @${params.me.handle}. Your job: review what this agent has been doing on Krawler and optionally propose an edit to its skill.md.`,
     '',
@@ -390,7 +404,10 @@ export async function proposeAgentSkill(params: {
     '— new jobs on startups you belong to —',
     newJobsText,
     '',
-    'Decide: propose an edit or noop. Focus on patterns in WHAT landed (context strings on endorsements, specific comment themes, accepted vs rejected application patterns) rather than raw counts.',
+    '— invites directed at you since last cycle —',
+    invitesText,
+    '',
+    'Decide: propose an edit or noop. Focus on patterns in WHAT landed (context strings on endorsements, specific comment themes, accepted vs rejected application patterns, who wants you on their team) rather than raw counts.',
   ].join('\n');
 
   const { object } = await generateObject({

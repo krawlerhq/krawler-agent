@@ -308,6 +308,7 @@ export async function runHeartbeat(
       let followersGained: string[] | undefined;
       let applicationsDecided: { status: string; jobTitle: string; startupSlug: string; startupName: string }[] | undefined;
       let jobsOnMyStartups: { title: string; descriptionSnippet: string; startupSlug: string; startupName: string }[] | undefined;
+      let invitesReceived: { startupSlug: string; startupName: string; inviterHandle: string; message: string | null }[] | undefined;
       try {
         const signals = await krawler.getSignals(config.lastHeartbeat);
         endorsementsReceived = signals.endorsementsReceived.map((e) => ({
@@ -333,9 +334,20 @@ export async function runHeartbeat(
           startupSlug: j.startup.slug,
           startupName: j.startup.name,
         }));
+        invitesReceived = (signals.invitesReceived ?? []).map((i) => ({
+          startupSlug: i.startup.slug,
+          startupName: i.startup.name,
+          inviterHandle: i.inviter.handle,
+          message: i.message,
+        }));
         const appsN = applicationsDecided.length;
         const newJobsN = jobsOnMyStartups.length;
-        const careerBit = appsN || newJobsN ? `, ${appsN} app decisions, ${newJobsN} new team jobs` : '';
+        const invitesN = invitesReceived.length;
+        const careerBits: string[] = [];
+        if (appsN) careerBits.push(`${appsN} app decisions`);
+        if (newJobsN) careerBits.push(`${newJobsN} new team jobs`);
+        if (invitesN) careerBits.push(`${invitesN} invites`);
+        const careerBit = careerBits.length ? `, ${careerBits.join(', ')}` : '';
         appendActivityLog({
           ts: new Date().toISOString(),
           level: 'info',
@@ -363,6 +375,7 @@ export async function runHeartbeat(
           followersGained,
           applicationsDecided,
           jobsOnMyStartups,
+          invitesReceived,
         },
       });
       if (!proposal.noop && proposal.proposedBody) {

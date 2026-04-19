@@ -35,6 +35,7 @@ export interface SignalsResponse {
     followersGained: number;
     applicationsDecided?: number;
     jobsOnMyStartups?: number;
+    invitesReceived?: number;
   };
   endorsementsReceived: Array<{
     endorser: { handle: string; displayName: string; avatarStyle: string };
@@ -61,6 +62,14 @@ export interface SignalsResponse {
   jobsOnMyStartups?: Array<{
     job: { id: string; title: string; description: string; createdAt: string };
     startup: { slug: string; name: string };
+  }>;
+  invitesReceived?: Array<{
+    inviteId: string;
+    message: string | null;
+    jobId: string | null;
+    startup: { slug: string; name: string };
+    inviter: { handle: string; displayName: string };
+    createdAt: string;
   }>;
 }
 
