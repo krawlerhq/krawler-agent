@@ -291,11 +291,20 @@ function truncate(s: string, n: number): string {
 
 const proposalSchema = z.object({
   noop: z.boolean().describe('True if there is no change worth proposing this cycle. Prefer noop when signal is thin.'),
+  target: z
+    .enum(['agent_md', 'installed_skill'])
+    .optional()
+    .describe('Which document to edit. "agent_md" edits this agent\'s voice doc (the three-section Focus/Good at/Learning file). "installed_skill" edits one of the external capability docs installed on this agent (pick by slug). Required when noop is false. Defaults to agent_md for backwards compat if omitted.'),
+  targetSlug: z
+    .string()
+    .max(120)
+    .optional()
+    .describe('Required when target is "installed_skill". Must exactly match one of the slugs listed in the Installed skills section of the system prompt (each header shows `(slug: <slug>)`).'),
   proposedBody: z
     .string()
     .max(64 * 1024)
     .optional()
-    .describe('The full new agent.md body. Required when noop is false. Preserve the three-section structure (Focus / Good at / Learning) unless a genuinely better structure emerges from evidence.'),
+    .describe('The full new body for the target document. Required when noop is false. For agent_md: preserve the three-section structure (Focus / Good at / Learning) unless a genuinely better structure emerges from evidence. For installed_skill: preserve the skill\'s own structure and authorial voice; your edits are tuning the skill for THIS agent\'s use, not rewriting it wholesale.'),
   rationale: z
     .string()
     .max(600)
@@ -352,6 +361,8 @@ export interface ReflectionOutcome {
 
 export interface ProposeResult {
   noop: boolean;
+  target?: 'agent_md' | 'installed_skill';
+  targetSlug?: string;
   proposedBody?: string;
   rationale?: string;
 }
@@ -416,15 +427,16 @@ export async function proposeAgentSkill(params: {
         .join('\n');
 
   const system = [
-    `You are reflecting on behalf of @${params.me.handle}. Your job: review what this agent has been doing on Krawler and optionally propose an edit to its skill.md.`,
+    `You are reflecting on behalf of @${params.me.handle}. Your job: review what this agent has been doing on Krawler and optionally propose exactly one edit. The edit can target either agent.md (the voice) or one installed skill (a capability).`,
     '',
     'Rules:',
-    '- Prefer noop. Do NOT churn the skill for noise. Only propose when you have real signal: posts that landed, posts that did not, endorsements received, application outcomes, or a pattern in what the agent keeps reaching for.',
-    '- When you propose, return the FULL new skill.md body, not a diff.',
-    '- Keep the structure roughly the same. "Good at" accumulates topics/patterns that have worked. "Learning" captures recent attempts. Edit narratively, not mechanically.',
-    '- Voice stays the agent\'s voice. Do not make it generic. Do not sanitize away personality.',
-    '- Never write endorsements or follow counts into skill.md. Those are on the dashboard; skill.md is for the behavior, not the stats.',
-    '- Application outcomes (accepted / rejected) are good signal for career direction: what kinds of roles this agent is landing and what kinds are declining it. Apply or adjust accordingly.',
+    '- Prefer noop. Do NOT churn files for noise. Only propose when you have real signal: posts that landed, posts that did not, endorsements received, application outcomes, or a pattern in what the agent keeps reaching for.',
+    '- When you propose, return the FULL new body for the target, not a diff, and set `target` + (if installed_skill) `targetSlug`.',
+    '- When the signal is about VOICE or DOMAIN (tone that works, what the agent is good at, what it is learning, career direction), target agent.md. Keep the three-section structure (Focus / Good at / Learning). Voice stays the agent\'s voice; do not make it generic.',
+    '- When the signal is about a CAPABILITY (a specific installed skill is getting used well / poorly, its guidance is off for this agent\'s context, a tactic in the skill produced a result worth codifying), target the specific installed skill by slug. Each installed skill in the system prompt shows `(slug: <slug>)` in its header; use that exact slug. Preserve the skill\'s own structure and authorial voice; your edits tune it for THIS agent\'s use, they do not rewrite it wholesale.',
+    '- Pick only ONE target per cycle. If both voice and a capability seem worth editing, pick the one with stronger signal and leave the other for a later heartbeat.',
+    '- Never write endorsements or follow counts into agent.md or an installed skill. Those are dashboard stats, not behavior.',
+    '- Application outcomes (accepted / rejected) are signal for career direction: what kinds of roles this agent is landing and what kinds are declining it. Adjust agent.md accordingly when that is the signal.',
   ].join('\n');
 
   const installedSkillsBlock = params.installedSkillsMd && params.installedSkillsMd.trim().length > 0
@@ -456,7 +468,7 @@ export async function proposeAgentSkill(params: {
     '-- invites directed at you since last cycle --',
     invitesText,
     '',
-    'Decide: propose an edit to agent.md or noop. Focus on patterns in WHAT landed (context strings on endorsements, specific comment themes, accepted vs rejected application patterns, who wants you on their team) rather than raw counts. The installed skills above are capability context; you are NOT editing them in this pass, only agent.md.',
+    'Decide: propose exactly one edit (target agent.md OR one installed skill by slug) or noop. Focus on patterns in WHAT landed (context strings on endorsements, specific comment themes, accepted vs rejected application patterns, who wants you on their team) rather than raw counts.',
   ].join('\n');
 
   const { object } = await generateObject({
@@ -471,6 +483,8 @@ export async function proposeAgentSkill(params: {
   }
   return {
     noop: false,
+    target: object.target ?? 'agent_md',
+    targetSlug: object.targetSlug,
     proposedBody: object.proposedBody,
     rationale: object.rationale,
   };

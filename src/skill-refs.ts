@@ -177,6 +177,18 @@ export async function resolveSkill(
   return { body: upstream, installed: true };
 }
 
+// Entry shape returned alongside the markdown so callers (e.g. the
+// reflection loop) can pick a target skill by slug when they want to
+// write back to the local cache. `body` is the exact content embedded
+// in the markdown so consumers can reason about it structurally.
+export interface InstalledSkillEntry {
+  slug: string;
+  title: string;
+  origin: string;
+  body: string;
+  edited: boolean;
+}
+
 // Fetch (or load from cache) every skillRef on an agent and concatenate
 // into a single markdown block ready for the system prompt. Returns ''
 // when the agent has no refs or none resolved this cycle. Caller-supplied
@@ -184,9 +196,9 @@ export async function resolveSkill(
 // server sends up to 32 refs.
 export async function fetchInstalledSkillsMd(
   refs: SkillRef[] | undefined,
-): Promise<{ markdown: string; newlyInstalled: string[]; dropped: number }> {
+): Promise<{ markdown: string; newlyInstalled: string[]; dropped: number; entries: InstalledSkillEntry[] }> {
   if (!refs || refs.length === 0) {
-    return { markdown: '', newlyInstalled: [], dropped: 0 };
+    return { markdown: '', newlyInstalled: [], dropped: 0, entries: [] };
   }
   const picks = refs.slice(0, MAX_REFS_PER_CYCLE);
   const newlyInstalled: string[] = [];
@@ -200,16 +212,47 @@ export async function fetchInstalledSkillsMd(
   const good = resolved.filter((x): x is { ref: SkillRef; body: string } => x !== null);
   const dropped = picks.length - good.length;
   if (good.length === 0) {
-    return { markdown: '', newlyInstalled, dropped };
+    return { markdown: '', newlyInstalled, dropped, entries: [] };
   }
-  const sections = good.map(({ ref, body }) => {
-    const title = ref.title || ref.path || slugForRef(ref);
-    const origin = ref.url;
-    const trailer = isLocallyEdited(ref) ? ' (locally edited)' : '';
-    return `### ${title}${trailer}\n\nOrigin: ${origin}\n\n${body}\n`;
-  });
+  const entries: InstalledSkillEntry[] = good.map(({ ref, body }) => ({
+    slug: slugForRef(ref),
+    title: ref.title || ref.path || slugForRef(ref),
+    origin: ref.url,
+    body,
+    edited: isLocallyEdited(ref),
+  }));
+  // Slug is explicit in every header so downstream consumers (the
+  // reflection prompt) can reference a skill by its exact slug when
+  // proposing edits.
+  const sections = entries.map((e) =>
+    `### ${e.title}  (slug: \`${e.slug}\`)${e.edited ? '  (locally edited)' : ''}\n\nOrigin: ${e.origin}\n\n${e.body}\n`,
+  );
   const header = `## Installed skills\n\nExternal capability documents this agent has installed. Each is a locally-cached copy of a public markdown skill; the reflection loop may evolve the local copy over time. Treat each as a professional competency: when the user's goal aligns with one of these skills, draw on it.${dropped > 0 ? ` (${dropped} skill${dropped === 1 ? '' : 's'} failed to install this cycle; retrying next heartbeat.)` : ''}\n\n`;
-  return { markdown: header + sections.join('\n---\n\n'), newlyInstalled, dropped };
+  return { markdown: header + sections.join('\n---\n\n'), newlyInstalled, dropped, entries };
+}
+
+// Overwrite the local SKILL.md for one installed skill. Used by the
+// reflection loop when it proposes an edit whose target is an installed
+// skill (not agent.md). Does NOT touch meta.json's lastSyncHash, so the
+// next isLocallyEdited() check correctly reports the divergence; that is
+// the whole point: a locally-edited skill is the material that can
+// later be PR'd back upstream.
+//
+// Returns true on success, false when the target dir does not exist
+// (e.g. called for a slug that was never installed). Caller should
+// validate the slug against the entries from fetchInstalledSkillsMd
+// before calling this; this function is intentionally strict about the
+// target dir being present.
+export function writeLocalSkillBody(slug: string, body: string): boolean {
+  const dir = join(getInstalledSkillsDir(), slug);
+  const p = join(dir, 'SKILL.md');
+  if (!existsSync(p)) return false;
+  try {
+    writeFileSync(p, body, { mode: 0o600 });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // A locally-edited skill has a SKILL.md whose sha256 no longer matches
