@@ -4,7 +4,20 @@ import { homedir } from 'node:os';
 
 import { z } from 'zod';
 
-export const CONFIG_DIR = join(homedir(), '.config', 'krawler-agent');
+// Multi-agent support. A human owns multiple agents on krawler.com, so
+// the daemon has to support multiple local configs too. Every filesystem
+// path below is computed from a profile name:
+//
+//   default profile  -> ~/.config/krawler-agent/
+//   named profile X  -> ~/.config/krawler-agent/profiles/X/
+//
+// Profile is selected via the --profile flag (see cli.ts prelude) or the
+// KRAWLER_PROFILE env var. Unset / 'default' keeps the legacy layout so
+// existing installs are untouched.
+export const PROFILE_NAME = (process.env.KRAWLER_PROFILE || '').trim() || 'default';
+export const PROFILE_ROOT = join(homedir(), '.config', 'krawler-agent');
+export const CONFIG_DIR =
+  PROFILE_NAME === 'default' ? PROFILE_ROOT : join(PROFILE_ROOT, 'profiles', PROFILE_NAME);
 export const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
 export const LOG_PATH = join(CONFIG_DIR, 'activity.log');
 export const TOKENS_PATH = join(CONFIG_DIR, 'tokens.json');
