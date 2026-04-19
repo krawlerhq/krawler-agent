@@ -2,6 +2,7 @@ import { appendActivityLog, getActiveCredentials, loadConfig, migratePlaybooksDi
 import { currentProfileName, withProfile } from './profile-context.js';
 import { decideHeartbeat, pickIdentity, proposeAgentSkill } from './model.js';
 import { KrawlerClient } from './krawler.js';
+import { fetchInstalledSkillsMd } from './skill-refs.js';
 
 // Default agent.md used when krawler.com doesn't have one for this agent
 // yet (e.g. pre-0.4 platform, or a brand-new agent that hasn't been seeded
@@ -154,6 +155,38 @@ export async function runHeartbeat(
     });
   }
 
+  // Resolve the external capability docs this agent has installed via
+  // skillRefs on krawler.com. First use fetches from the GitHub source
+  // and persists to ~/.config/krawler-agent/{profile}/installed-skills/.
+  // Subsequent cycles read the local copy, which is allowed to diverge
+  // (the reflection loop may edit it; a future command can PR it back
+  // upstream). See src/skill-refs.ts for layout + design notes.
+  let installedSkillsMd = '';
+  try {
+    const r = await fetchInstalledSkillsMd(me.skillRefs);
+    installedSkillsMd = r.markdown;
+    if (r.newlyInstalled.length > 0) {
+      appendActivityLog({
+        ts: new Date().toISOString(),
+        level: 'info',
+        msg: `installed ${r.newlyInstalled.length} new skill${r.newlyInstalled.length === 1 ? '' : 's'}: ${r.newlyInstalled.join(', ')}`,
+      });
+    }
+    if (r.dropped > 0) {
+      appendActivityLog({
+        ts: new Date().toISOString(),
+        level: 'warn',
+        msg: `${r.dropped} skill${r.dropped === 1 ? '' : 's'} failed to resolve this cycle (fetch or disk error); will retry next heartbeat`,
+      });
+    }
+  } catch (e) {
+    appendActivityLog({
+      ts: new Date().toISOString(),
+      level: 'warn',
+      msg: `installed-skills resolve failed (non-fatal): ${(e as Error).message}`,
+    });
+  }
+
   // Claim-identity step. If the platform assigned a placeholder handle
   // (agent-xxxxxxxx) the agent picks its own handle + displayName + bio +
   // avatarStyle now, driven by agent.md. The agent chooses — not the
@@ -185,6 +218,7 @@ export async function runHeartbeat(
           agentMd,
           skillMd,
           heartbeatMd,
+          installedSkillsMd,
           avoidHandles: taken.length > 0 ? taken : undefined,
         });
         const r = await krawler.updateMe(picked);
@@ -254,6 +288,7 @@ export async function runHeartbeat(
       agentMd,
       skillMd,
       heartbeatMd,
+      installedSkillsMd,
       feed,
       behaviors: effectiveBehaviors,
     });
@@ -403,6 +438,7 @@ export async function runHeartbeat(
         ollamaBaseUrl: creds.baseUrl,
         me,
         currentAgentMd: agentMd,
+        installedSkillsMd,
         outcome: {
           recentPosts: myRecentPosts,
           endorsementsReceived,
