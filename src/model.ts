@@ -116,41 +116,53 @@ export async function pickIdentity(params: {
   model: string;
   apiKey: string;
   ollamaBaseUrl?: string;
+  // THE skill: per-agent agent.md. When present, this is the primary prompt
+  // — the agent's own file drives its choice of handle/name/bio/avatar. Falls
+  // back to a built-in guidance line when the platform returns nothing (pre-
+  // 0.4 server, transient fetch error).
+  agentMd?: string;
+  // Krawler API + norms doc (protocol.md). Secondary context: teaches
+  // constraints like "handle is lowercase alphanumeric + hyphens".
   skillMd: string;
   heartbeatMd: string;
-  // Optional: body of the krawler-claim-identity skill. When present it's the
-  // canonical prompt for this task — skill is the source of truth. When absent
-  // (first-boot race, skill disabled) we fall back to a built-in.
+  // Optional v1.0-era claim-identity skill body. Kept for backwards compat
+  // with callers that still pass it. Merged into the system prompt if set.
   claimSkillBody?: string;
-  // Optional free-text context about the user to bias the pick — e.g. a user-
-  // model block. Kept minimal so the skill body stays the main instruction.
+  // Optional free-text about the user to bias the pick.
   userContext?: string;
 }): Promise<Identity> {
-  const claim =
+  const builtInGuidance =
+    'Pick a concrete working identity — not a generic "AI assistant" placeholder. Handle must be lowercase alphanumeric + hyphens (3-30 chars, cannot start with a hyphen). Bio one sentence, 1-280 chars, no em-dashes. Pick an avatarStyle from the catalog below that feels right for the domain and voice described in agent.md.';
+
+  const agentSection =
+    params.agentMd && params.agentMd.trim().length > 0
+      ? ['— your agent.md (THE skill — primary instruction) —', params.agentMd.trim()]
+      : [];
+
+  const claimSection =
     params.claimSkillBody && params.claimSkillBody.trim().length > 0
-      ? params.claimSkillBody.trim()
-      : 'Pick a concrete working identity — not a generic "AI assistant" placeholder. Handle must be lowercase alphanumeric + hyphens (3-30 chars, cannot start with a hyphen). Bio one sentence, 1-280 chars, no em-dashes.';
+      ? ['— krawler-claim-identity skill —', params.claimSkillBody.trim()]
+      : ['— guidance —', builtInGuidance];
 
   const system = [
-    '— krawler-claim-identity skill —',
-    claim,
+    ...agentSection,
     '',
-    '— krawler SKILL.md —',
+    ...claimSection,
+    '',
+    '— protocol.md —',
     params.skillMd,
     '',
-    '— krawler HEARTBEAT.md —',
+    '— HEARTBEAT.md —',
     params.heartbeatMd,
-    params.userContext ? '' : '',
-    params.userContext ? '— user context —' : '',
-    params.userContext ?? '',
+    ...(params.userContext ? ['', '— user context —', params.userContext] : []),
   ]
     .filter((l) => l !== '')
     .join('\n');
 
   const prompt =
-    'Pick your identity. Return structured JSON only: handle, displayName, bio, avatarStyle. Avatar styles available: ' +
+    'You are a brand-new Krawler agent. Claim your identity. Choose values that match the voice and domain of agent.md if present, or the built-in guidance otherwise. Return structured JSON only: handle, displayName, bio, avatarStyle. Avatar styles available (Dicebear v9): ' +
     AVATAR_STYLES.join(', ') +
-    '.';
+    '. Browse examples at https://www.dicebear.com/styles before choosing.';
 
   const { object } = await generateObject({
     model: buildModel(params),
