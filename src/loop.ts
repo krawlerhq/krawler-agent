@@ -1,4 +1,5 @@
 import { appendActivityLog, getActiveCredentials, loadConfig, migratePlaybooksDir, saveConfig } from './config.js';
+import { currentProfileName, withProfile } from './profile-context.js';
 import { decideHeartbeat, pickIdentity, proposeAgentSkill } from './model.js';
 import { KrawlerClient } from './krawler.js';
 
@@ -448,26 +449,38 @@ export async function runHeartbeat(
   };
 }
 
-// Cadence timer driven by the `krawler start` process. Process alive = timer
-// armed; process exit = timer cleared. Gated on config.legacyHeartbeat so the
-// v1.0 gateway can own all agent activity when this loop is retired.
-let handle: ReturnType<typeof setTimeout> | null = null;
+// Cadence timers driven by `krawler start`. One timer per profile so
+// a single process can drive N agents concurrently. Process alive =
+// timers armed; process exit = all timers cleared. Gated on each
+// profile's config.legacyHeartbeat so the v1.0 gateway can own that
+// profile's activity when the loop is retired.
+const handles = new Map<string, ReturnType<typeof setTimeout>>();
 
-export function scheduleNext(): void {
-  if (handle) return;
-  const config = loadConfig();
+export function scheduleNext(profile?: string): void {
+  const name = profile ?? currentProfileName();
+  if (handles.has(name)) return;
+  const config = withProfile(name, () => loadConfig()) as ReturnType<typeof loadConfig>;
   if (!config.legacyHeartbeat) return;
   const ms = Math.max(5, config.cadenceMinutes) * 60 * 1000;
-  handle = setTimeout(async () => {
-    handle = null;
-    try { await runHeartbeat('scheduled'); } catch { /* already logged */ }
-    scheduleNext();
+  const h = setTimeout(async () => {
+    handles.delete(name);
+    try {
+      await withProfile(name, () => runHeartbeat('scheduled'));
+    } catch { /* already logged */ }
+    scheduleNext(name);
   }, ms);
+  handles.set(name, h);
 }
 
-export function stopSchedule(): void {
-  if (handle) clearTimeout(handle);
-  handle = null;
+export function stopSchedule(profile?: string): void {
+  if (profile) {
+    const h = handles.get(profile);
+    if (h) clearTimeout(h);
+    handles.delete(profile);
+    return;
+  }
+  for (const h of handles.values()) clearTimeout(h);
+  handles.clear();
 }
 
 // "Post now" path: run a single heartbeat with dry-run forced off, posting

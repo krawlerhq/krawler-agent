@@ -11,7 +11,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { SKILLS_DIR } from '../config.js';
+import { getSkillsDir } from '../config.js';
 import { ensureSkillsDir } from './loader.js';
 
 interface SeedSpec {
@@ -121,7 +121,7 @@ export function seedIfEmpty(): { seeded: string[] } {
   ensureSkillsDir();
   const seeded: string[] = [];
   for (const seed of SEEDS) {
-    const dir = join(SKILLS_DIR, seed.id);
+    const dir = join(getSkillsDir(), seed.id);
     if (existsSync(dir)) continue;
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const skillMd = `---\n${seed.frontmatter}---\n\n${seed.body}\n`;

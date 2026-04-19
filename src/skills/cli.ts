@@ -7,7 +7,7 @@ import { basename, join, resolve } from 'node:path';
 
 import { Command } from 'commander';
 
-import { SKILLS_DIR } from '../config.js';
+import { getSkillsDir } from '../config.js';
 import { selectSkills } from './select.js';
 import { refreshRegistry, listSkills, getSkill } from './registry.js';
 import { seedIfEmpty } from './seed.js';
@@ -82,7 +82,7 @@ export function registerSkillCommands(program: Command): void {
       }
       const targetId = opts.as ?? basename(src);
       ensureSkillsDir();
-      const dest = join(SKILLS_DIR, targetId);
+      const dest = join(getSkillsDir(), targetId);
       if (existsSync(dest)) {
         // eslint-disable-next-line no-console
         console.error(`already installed: ${targetId}. Remove first with 'krawler skill remove ${targetId}'.`);

@@ -7,7 +7,8 @@ import { dirname, resolve } from 'node:path';
 import { Command } from 'commander';
 import open from 'open';
 
-import { CONFIG_PATH, PROFILE_NAME, getActiveCredentials, loadConfig, readActivityLog, redactConfig } from './config.js';
+import { getActiveCredentials, getConfigPath, loadConfig, readActivityLog, redactConfig } from './config.js';
+import { DEFAULT_PROFILE, currentProfileName, listProfiles, withProfile } from './profile-context.js';
 import { buildServer } from './server.js';
 import { postNow, runHeartbeat, scheduleNext, stopSchedule } from './loop.js';
 import { KrawlerClient } from './krawler.js';
@@ -106,13 +107,19 @@ program
       process.exit(1);
     }
     const addr = await app.listen({ host: opts.host, port: resolvedPort });
-    const config = loadConfig();
-    const creds = getActiveCredentials(config);
-    const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
-    const hasKrawlerKey = Boolean(config.krawlerApiKey);
+
+    // Single process, multiple profiles. If --profile X is passed, run
+    // just X. Otherwise enumerate every profile with a config.json on
+    // disk; if none, fall back to the default profile so the settings
+    // page can collect the first key.
+    const requestedProfile = opts.profile && opts.profile.trim();
+    const profiles = requestedProfile
+      ? [requestedProfile]
+      : listProfiles();
+    if (profiles.length === 0) profiles.push(DEFAULT_PROFILE);
 
     // eslint-disable-next-line no-console
-    console.log(`🕸️  Krawler Agent v${pkg.version}${PROFILE_NAME === 'default' ? '' : ` · profile: ${PROFILE_NAME}`}`);
+    console.log(`🕸️  Krawler Agent v${pkg.version}`);
     // eslint-disable-next-line no-console
     console.log(`   settings: ${addr}`);
     if (resolvedPort !== requestedPort) {
@@ -120,60 +127,62 @@ program
       console.log(`   (port ${requestedPort} was busy; picked ${resolvedPort})`);
     }
     // eslint-disable-next-line no-console
-    console.log(`   config:   ${CONFIG_PATH}`);
+    console.log(`   profiles: ${profiles.length}  (${profiles.join(', ')})`);
 
-    if (!hasKrawlerKey || !hasModelCreds) {
-      const missing = [
-        hasKrawlerKey ? null : 'Krawler agent key',
-        hasModelCreds ? null : `${config.provider} credentials`,
-      ].filter(Boolean).join(' + ');
-      // eslint-disable-next-line no-console
-      console.log(`\n⚠  missing: ${missing}`);
-      // eslint-disable-next-line no-console
-      console.log(`   open ${addr} to paste keys — the pump stays idle until they are saved.`);
-      if (opts.open) {
-        try { await open(addr); } catch { /* silent */ }
-      }
-      // No heartbeat scheduled. The settings page can save keys at any point;
-      // the next `krawler start` will pick them up. Deliberately no auto-reload
-      // so the user's first successful run is an explicit one.
-      return;
+    let anyScheduled = false;
+    let anyIdle = false;
+    for (const profile of profiles) {
+      await withProfile(profile, async () => {
+        const config = loadConfig();
+        const creds = getActiveCredentials(config);
+        const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
+        const hasKrawlerKey = Boolean(config.krawlerApiKey);
+
+        // eslint-disable-next-line no-console
+        console.log(`\n   [${profile}] config ${getConfigPath()}`);
+
+        if (!hasKrawlerKey || !hasModelCreds) {
+          const missing = [
+            hasKrawlerKey ? null : 'krawler key',
+            hasModelCreds ? null : `${config.provider} creds`,
+          ].filter(Boolean).join(' + ');
+          // eslint-disable-next-line no-console
+          console.log(`   [${profile}] ⚠  idle — missing ${missing}. open ${addr}?profile=${encodeURIComponent(profile)} to paste.`);
+          anyIdle = true;
+          return;
+        }
+
+        const id = await resolveIdentity();
+        if (!id.ok) {
+          // eslint-disable-next-line no-console
+          console.log(`   [${profile}] ⚠  idle — /me failed: ${id.reason}`);
+          anyIdle = true;
+          return;
+        }
+        if (id.placeholder) {
+          // eslint-disable-next-line no-console
+          console.log(`   [${profile}] ℹ  @${id.handle} is a placeholder — the daemon will claim identity on first cycle`);
+        }
+
+        // eslint-disable-next-line no-console
+        console.log(`   [${profile}] ✓ @${id.handle}${id.displayName ? ` (${id.displayName})` : ''} · ${config.provider}/${config.model} · every ${config.cadenceMinutes} min${config.dryRun ? ' · dry-run' : ''}`);
+        anyScheduled = true;
+
+        // Fire one heartbeat now, then arm the cadence for this profile.
+        // Each runHeartbeat + scheduleNext runs inside withProfile so
+        // filesystem paths resolve to this profile's dir.
+        void withProfile(profile, async () => {
+          try { await runHeartbeat('scheduled'); } catch { /* logged */ }
+          scheduleNext(profile);
+        });
+      });
     }
 
-    const id = await resolveIdentity();
-    if (!id.ok) {
-      // eslint-disable-next-line no-console
-      console.log(`\n⚠  krawler.com /me failed: ${id.reason}`);
-      // eslint-disable-next-line no-console
-      console.log(`   check the key at ${addr} or run \`krawler status\`. pump stays idle.`);
-      if (opts.open) {
-        try { await open(addr); } catch { /* silent */ }
-      }
-      return;
+    if (!anyScheduled && anyIdle && opts.open) {
+      try { await open(addr); } catch { /* silent */ }
     }
-    if (id.placeholder) {
-      // eslint-disable-next-line no-console
-      console.log(`\n⚠  @${id.handle} is a placeholder — claim a real handle at https://krawler.com/dashboard/ first.`);
-      // eslint-disable-next-line no-console
-      console.log('   pump stays idle to avoid posting under a placeholder identity.');
-      return;
-    }
-
     // eslint-disable-next-line no-console
-    console.log(`\n   identity: @${id.handle}${id.displayName ? ` (${id.displayName})` : ''}`);
-    // eslint-disable-next-line no-console
-    console.log(`   model:    ${config.provider} / ${config.model}`);
-    // eslint-disable-next-line no-console
-    console.log(`   cadence:  every ${config.cadenceMinutes} min${config.dryRun ? ' · dry-run' : ''}`);
-    // eslint-disable-next-line no-console
-    console.log(`\n   heartbeats run while this process lives. Ctrl+C to sleep.\n`);
-
-    // Fire one heartbeat now so the first cycle is visible immediately, then
-    // let scheduleNext arm the cadence timer from end-of-heartbeat.
-    void (async () => {
-      try { await runHeartbeat('scheduled'); } catch { /* already logged */ }
-      scheduleNext();
-    })();
+    console.log('\n   heartbeats run while this process lives. Ctrl+C to sleep all profiles.\n');
   });
 
 program
@@ -184,7 +193,7 @@ program
     // eslint-disable-next-line no-console
     console.log(`🕸️  Krawler Agent v${pkg.version}`);
     // eslint-disable-next-line no-console
-    console.log(`   config:   ${CONFIG_PATH}`);
+    console.log(`   config:   ${getConfigPath()}`);
     // eslint-disable-next-line no-console
     console.log(`   provider: ${config.provider} / ${config.model}`);
     // eslint-disable-next-line no-console
@@ -236,7 +245,7 @@ program
     // eslint-disable-next-line no-console
     console.log(JSON.stringify(c, null, 2));
     // eslint-disable-next-line no-console
-    console.log(`\nconfig file: ${CONFIG_PATH}`);
+    console.log(`\nconfig file: ${getConfigPath()}`);
   });
 
 program

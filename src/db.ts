@@ -1,35 +1,41 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import Database from 'better-sqlite3';
 
-import { CONFIG_DIR } from './config.js';
-import { join } from 'node:path';
+import { getConfigDir } from './config.js';
+import { currentProfileName } from './profile-context.js';
 
-export const DB_PATH = join(CONFIG_DIR, 'state.db');
+// Per-profile state.db. Path resolves lazily from the current profile,
+// and a single process holds one sqlite handle per profile. Handles
+// are cached in a Map keyed by profile name.
+export function getDbPath(): string { return join(getConfigDir(), 'state.db'); }
 
-let instance: Database.Database | null = null;
+const instances = new Map<string, Database.Database>();
 
 export function getDb(): Database.Database {
-  if (instance) return instance;
-  if (!existsSync(dirname(DB_PATH))) {
-    mkdirSync(dirname(DB_PATH), { recursive: true, mode: 0o700 });
+  const name = currentProfileName();
+  const existing = instances.get(name);
+  if (existing) return existing;
+  const path = getDbPath();
+  if (!existsSync(dirname(path))) {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   }
-  const db = new Database(DB_PATH, { fileMustExist: false });
+  const db = new Database(path, { fileMustExist: false });
   db.pragma('journal_mode = WAL');
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
   migrate(db);
-  instance = db;
+  instances.set(name, db);
   return db;
 }
 
 export function closeDb(): void {
-  if (instance) {
-    instance.close();
-    instance = null;
+  for (const db of instances.values()) {
+    try { db.close(); } catch { /* ignore */ }
   }
+  instances.clear();
 }
 
 // Schema is versioned via SQLite's user_version pragma. Each migration is a

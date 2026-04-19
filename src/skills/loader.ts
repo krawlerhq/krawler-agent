@@ -1,4 +1,4 @@
-// Load skills from disk. A skill is a directory under SKILLS_DIR named by the
+// Load skills from disk. A skill is a directory under getSkillsDir() named by the
 // skill slug; it must contain SKILL.md (front-matter + body) and may contain
 // examples.jsonl, evals.jsonl, tools.json, meta.json.
 //
@@ -12,26 +12,26 @@ import { basename, join } from 'node:path';
 
 import matter from 'gray-matter';
 
-import { SKILLS_DIR } from '../config.js';
+import { getSkillsDir } from '../config.js';
 import type { Skill, SkillExample, SkillMeta } from './types.js';
 import { skillFrontmatterSchema, skillMetaSchema } from './types.js';
 
 export function ensureSkillsDir(): string {
-  if (!existsSync(SKILLS_DIR)) mkdirSync(SKILLS_DIR, { recursive: true, mode: 0o700 });
-  const drafts = join(SKILLS_DIR, 'drafts');
+  if (!existsSync(getSkillsDir())) mkdirSync(getSkillsDir(), { recursive: true, mode: 0o700 });
+  const drafts = join(getSkillsDir(), 'drafts');
   if (!existsSync(drafts)) mkdirSync(drafts, { recursive: true, mode: 0o700 });
-  return SKILLS_DIR;
+  return getSkillsDir();
 }
 
-// Lists every skill directory in SKILLS_DIR (excluding 'drafts'). Skips dirs
+// Lists every skill directory in getSkillsDir() (excluding 'drafts'). Skips dirs
 // that do not contain SKILL.md rather than throwing, so one bad skill doesn't
 // break the whole registry.
 export function listSkillDirs(): string[] {
   ensureSkillsDir();
   const out: string[] = [];
-  for (const entry of readdirSync(SKILLS_DIR)) {
+  for (const entry of readdirSync(getSkillsDir())) {
     if (entry === 'drafts') continue;
-    const full = join(SKILLS_DIR, entry);
+    const full = join(getSkillsDir(), entry);
     try {
       if (!statSync(full).isDirectory()) continue;
       if (!existsSync(join(full, 'SKILL.md'))) continue;

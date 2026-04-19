@@ -1,42 +1,42 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 
 import { z } from 'zod';
 
-// Multi-agent support. A human owns multiple agents on krawler.com, so
-// the daemon has to support multiple local configs too. Every filesystem
-// path below is computed from a profile name:
+import { currentProfileName, profileDir } from './profile-context.js';
+
+// Multi-agent support. Every filesystem path is a runtime getter that
+// resolves to the current profile's directory:
 //
 //   default profile  -> ~/.config/krawler-agent/
 //   named profile X  -> ~/.config/krawler-agent/profiles/X/
 //
-// Profile is selected via the --profile flag (see cli.ts prelude) or the
-// KRAWLER_PROFILE env var. Unset / 'default' keeps the legacy layout so
-// existing installs are untouched.
-export const PROFILE_NAME = (process.env.KRAWLER_PROFILE || '').trim() || 'default';
-export const PROFILE_ROOT = join(homedir(), '.config', 'krawler-agent');
-export const CONFIG_DIR =
-  PROFILE_NAME === 'default' ? PROFILE_ROOT : join(PROFILE_ROOT, 'profiles', PROFILE_NAME);
-export const CONFIG_PATH = join(CONFIG_DIR, 'config.json');
-export const LOG_PATH = join(CONFIG_DIR, 'activity.log');
-export const TOKENS_PATH = join(CONFIG_DIR, 'tokens.json');
+// The active profile comes from withProfile() (AsyncLocalStorage) or
+// the KRAWLER_PROFILE env var. Functions instead of consts so a single
+// process can drive multiple profiles concurrently: each scheduled
+// cycle runs inside withProfile(name, ...), and loadConfig() et al
+// transparently route to the right files without being parameterised.
+export function getConfigDir(): string { return profileDir(currentProfileName()); }
+export function getConfigPath(): string { return join(getConfigDir(), 'config.json'); }
+export function getLogPath(): string { return join(getConfigDir(), 'activity.log'); }
+export function getTokensPath(): string { return join(getConfigDir(), 'tokens.json'); }
 // Local installable playbooks (v1.0-era skill registry). Renamed from
 // `skills/` in 0.5.4 because the word "skill" now means the per-agent
-// skill.md on krawler.com and the overload confused operators. The
-// migration below silently renames old dirs on first boot.
-export const SKILLS_DIR = join(CONFIG_DIR, 'playbooks');
-export const BLOBS_DIR = join(CONFIG_DIR, 'blobs');
+// skill.md on krawler.com.
+export function getSkillsDir(): string { return join(getConfigDir(), 'playbooks'); }
+export function getBlobsDir(): string { return join(getConfigDir(), 'blobs'); }
 
 // One-time migration: if the old skills/ dir exists and the new
 // playbooks/ dir doesn't, rename. Idempotent on repeat boots. Safe to
 // call multiple times. Logs nothing when there's nothing to do.
 export function migratePlaybooksDir(): 'migrated' | 'already' | 'noop' {
-  const oldPath = join(CONFIG_DIR, 'skills');
+  const dir = getConfigDir();
+  const oldPath = join(dir, 'skills');
+  const newPath = getSkillsDir();
   if (!existsSync(oldPath)) return 'noop';
-  if (existsSync(SKILLS_DIR)) return 'already';
+  if (existsSync(newPath)) return 'already';
   try {
-    renameSync(oldPath, SKILLS_DIR);
+    renameSync(oldPath, newPath);
     return 'migrated';
   } catch {
     return 'noop';
@@ -128,17 +128,17 @@ const configSchema = z.object({
 export type Config = z.infer<typeof configSchema>;
 
 function ensureDir() {
-  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true, mode: 0o700 });
+  if (!existsSync(getConfigDir())) mkdirSync(getConfigDir(), { recursive: true, mode: 0o700 });
 }
 
 export function loadConfig(): Config {
   ensureDir();
-  if (!existsSync(CONFIG_PATH)) {
+  if (!existsSync(getConfigPath())) {
     const initial = configSchema.parse({});
     saveConfig(initial);
     return initial;
   }
-  const raw = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'));
+  const raw = JSON.parse(readFileSync(getConfigPath(), 'utf8'));
   const parsed = configSchema.safeParse(raw);
   if (!parsed.success) {
     const fallback = configSchema.parse({});
@@ -149,12 +149,12 @@ export function loadConfig(): Config {
 
 export function saveConfig(c: Partial<Config>): Config {
   ensureDir();
-  const current = existsSync(CONFIG_PATH)
-    ? (JSON.parse(readFileSync(CONFIG_PATH, 'utf8')) as Partial<Config>)
+  const current = existsSync(getConfigPath())
+    ? (JSON.parse(readFileSync(getConfigPath(), 'utf8')) as Partial<Config>)
     : {};
   const merged = configSchema.parse({ ...current, ...c });
-  writeFileSync(CONFIG_PATH, JSON.stringify(merged, null, 2) + '\n', { mode: 0o600 });
-  try { chmodSync(CONFIG_PATH, 0o600); } catch { /* ignore */ }
+  writeFileSync(getConfigPath(), JSON.stringify(merged, null, 2) + '\n', { mode: 0o600 });
+  try { chmodSync(getConfigPath(), 0o600); } catch { /* ignore */ }
   return merged;
 }
 
@@ -225,7 +225,7 @@ export function appendActivityLog(entry: { ts: string; level: string; msg: strin
   ensureDir();
   const line = JSON.stringify(entry) + '\n';
   try {
-    writeFileSync(LOG_PATH, line, { flag: 'a', mode: 0o600 });
+    writeFileSync(getLogPath(), line, { flag: 'a', mode: 0o600 });
   } catch {
     /* ignore logging failures */
   }
@@ -233,8 +233,8 @@ export function appendActivityLog(entry: { ts: string; level: string; msg: strin
 
 export function readActivityLog(limit = 200): Array<{ ts: string; level: string; msg: string; data?: unknown }> {
   ensureDir();
-  if (!existsSync(LOG_PATH)) return [];
-  const text = readFileSync(LOG_PATH, 'utf8');
+  if (!existsSync(getLogPath())) return [];
+  const text = readFileSync(getLogPath(), 'utf8');
   const lines = text.split('\n').filter((l) => l.trim().length > 0);
   const last = lines.slice(-limit);
   const out: Array<{ ts: string; level: string; msg: string; data?: unknown }> = [];
