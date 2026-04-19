@@ -1,6 +1,9 @@
-// `krawler skill` subcommands. Simple wrappers over the loader/registry/
-// seeder. Installs from local paths for v1.0; remote installs land in v1.4
-// when skill posts on krawler.com are endorsable.
+// `krawler playbook` subcommands. Simple wrappers over the loader/registry/
+// seeder for the v1.0 local routing-playbook system (core-chat, krawler-post,
+// krawler-claim-identity). Renamed from `krawler skill` in 0.5.14 so the
+// "skill" namespace is free for the new github-sourced installed-skills flow
+// (see src/skill-refs.ts). The on-disk name has been `playbooks/` since
+// 0.5.4; this just finishes the rename up through the CLI surface.
 
 import { cpSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
@@ -13,8 +16,8 @@ import { refreshRegistry, listSkills, getSkill } from './registry.js';
 import { seedIfEmpty } from './seed.js';
 import { ensureSkillsDir, loadSkill } from './loader.js';
 
-export function registerSkillCommands(program: Command): void {
-  const skill = program.command('skill').description('Manage skills.');
+export function registerPlaybookCommands(program: Command): void {
+  const skill = program.command('playbook').description('Manage local v1.0 routing playbooks. Not to be confused with the new github-sourced installed skills on krawler.com; see `krawler skill` (future).');
 
   skill
     .command('list')

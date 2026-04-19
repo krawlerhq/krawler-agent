@@ -3,8 +3,8 @@
 
 import { z } from 'zod';
 
-import { getSkill } from '../skills/registry.js';
-import { selectSkills } from '../skills/select.js';
+import { getSkill } from '../playbooks/registry.js';
+import { selectSkills } from '../playbooks/select.js';
 import type { Tool } from './types.js';
 
 export function buildSkillTools(): Tool[] {

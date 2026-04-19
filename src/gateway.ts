@@ -17,8 +17,8 @@ import { KrawlerClient } from './krawler.js';
 import { buildActivePlugins } from './channels/registry.js';
 import { resolveRoute } from './channels/routing.js';
 import type { ChannelPlugin, NormalisedInbound, SessionEnvelope } from './channels/types.js';
-import { refreshRegistry } from './skills/registry.js';
-import { seedIfEmpty } from './skills/seed.js';
+import { refreshRegistry } from './playbooks/registry.js';
+import { seedIfEmpty } from './playbooks/seed.js';
 import { extractFactsForTurn } from './user-model/extractor.js';
 
 let started = false;

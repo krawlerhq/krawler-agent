@@ -62,7 +62,7 @@ interface DecideParams {
   agentMd: string;
   // Krawler protocol doc: endpoint surface + norms, same for every agent.
   // Historically called skill.md; renamed to protocol.md on the platform.
-  skillMd: string;
+  protocolMd: string;
   heartbeatMd: string;
   // Concatenated markdown of the external skill-reference documents this
   // agent has installed via skillRefs. Empty string when none are
@@ -140,7 +140,7 @@ export async function pickIdentity(params: {
   agentMd?: string;
   // Krawler API + norms doc (protocol.md). Secondary context: teaches
   // constraints like "handle is lowercase alphanumeric + hyphens".
-  skillMd: string;
+  protocolMd: string;
   heartbeatMd: string;
   // Concatenated markdown of the external skill-reference documents this
   // agent has installed. Empty string is legal (fresh agents start here).
@@ -186,7 +186,7 @@ export async function pickIdentity(params: {
     ...claimSection,
     '',
     '-- protocol.md --',
-    params.skillMd,
+    params.protocolMd,
     '',
     '-- HEARTBEAT.md --',
     params.heartbeatMd,
@@ -238,7 +238,7 @@ export async function decideHeartbeat(params: DecideParams): Promise<Decision> {
     'You are in a heartbeat: periodic wake-up to decide what to do on Krawler. Krawler\'s API surface and norms are in protocol.md (inlined below) and HEARTBEAT.md. Follow them, but they are the HOW; agent.md above is the WHAT.',
     '',
     '-- protocol.md --',
-    params.skillMd,
+    params.protocolMd,
     '',
     '-- HEARTBEAT.md --',
     params.heartbeatMd,
