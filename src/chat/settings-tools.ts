@@ -65,7 +65,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
   return {
     getConfig: tool({
       description: 'Read the current harness config (redacted; keys are masked). Use when the human asks "what model am I on?" or "what\'s my cadence?" so you answer from live config instead of memory.',
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         hooks.onToolStart('getConfig', 'reading harness config');
         try {
@@ -81,7 +81,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
 
     setProvider: tool({
       description: 'Change the model provider for this agent. Valid values: anthropic, openai, google, openrouter, ollama. BEFORE calling this, confirm that the matching API key is already saved in the config (call getConfig first; look for has<Provider>ApiKey). If the key is NOT saved, refuse and tell the human to paste the key on the settings page first. Changing provider mid-session ends the current turn once the tool resolves.',
-      parameters: z.object({
+      inputSchema: z.object({
         provider: z.enum(['anthropic', 'openai', 'google', 'openrouter', 'ollama']),
       }),
       execute: async ({ provider }) => {
@@ -99,7 +99,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
 
     setModel: tool({
       description: 'Change the model name for the current provider. Examples: "claude-sonnet-4-6" on anthropic, "anthropic/claude-opus-4-7" on openrouter, "gpt-4o" on openai. The model slug must be valid for the provider; a wrong one fails the next cycle.',
-      parameters: z.object({
+      inputSchema: z.object({
         model: z.string().min(1).max(120),
       }),
       execute: async ({ model }) => {
@@ -117,7 +117,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
 
     setCadence: tool({
       description: 'Change how often the scheduled heartbeat fires in headless mode. Minutes between cycles. Valid 5..1440. Does NOT affect the chat-mode idle-heartbeat which is always 45s after user goes quiet.',
-      parameters: z.object({
+      inputSchema: z.object({
         cadenceMinutes: z.number().int().min(5).max(24 * 60),
       }),
       execute: async ({ cadenceMinutes }) => {
@@ -135,7 +135,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
 
     setDryRun: tool({
       description: 'Toggle dry-run mode. When on, the daemon logs decisions but skips the actual Krawler API calls (no real posts, follows, endorses). Useful for testing prompt changes.',
-      parameters: z.object({
+      inputSchema: z.object({
         dryRun: z.boolean(),
       }),
       execute: async ({ dryRun }) => {
@@ -153,7 +153,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
 
     listInstalledSkills: tool({
       description: 'List every SKILL.md this agent has installed under its profile, with slug, origin url, body size, install time, and whether the local copy has diverged from the upstream (edited).',
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         hooks.onToolStart('listInstalledSkills', 'listing installed skills');
         try {
@@ -169,7 +169,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
 
     syncInstalledSkill: tool({
       description: 'Re-pull an installed SKILL.md from its upstream origin and overwrite the local copy. Refuses if the local body has diverged (the reflection loop or the human edited it), unless force=true. When the human asks you to refresh a skill or pick up upstream changes, use this.',
-      parameters: z.object({
+      inputSchema: z.object({
         slug: z.string().min(1).max(120),
         force: z.boolean().optional(),
       }),
@@ -190,7 +190,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
 
     listProfiles: tool({
       description: 'List every agent profile configured on this machine, each with its Krawler handle (or "(no key)" if unconfigured). Use to answer "what other agents do I have?" or "which profiles exist?".',
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         hooks.onToolStart('listProfiles', 'listing profiles');
         try {
@@ -206,7 +206,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
 
     addProfile: tool({
       description: 'Create a new local profile slot for another Krawler agent. Returns the slot name (e.g. agent-2). The human still has to paste the new agent\'s Krawler key and pick a model on the settings page; this tool only creates the directory.',
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         hooks.onToolStart('addProfile', 'creating new profile slot');
         try {

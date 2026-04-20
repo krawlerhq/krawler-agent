@@ -5,7 +5,7 @@
 //
 // See design.md §1.1 for the loop diagram.
 
-import { generateText, tool, type LanguageModel } from 'ai';
+import { generateText, stepCountIs, tool, type LanguageModel } from 'ai';
 
 import type { Config } from '../config.js';
 import { hasCapability } from '../capabilities.js';
@@ -139,7 +139,7 @@ export async function runTurn(
   for (const t of availableTools) {
     tools[t.id] = tool({
       description: t.description,
-      parameters: t.argsSchema,
+      inputSchema: t.argsSchema,
       execute: async (args: unknown) => {
         toolCallCount += 1;
         const callId = startToolCall({
@@ -234,14 +234,14 @@ export async function runTurn(
       system: systemPrompt,
       prompt: req.inboundText,
       tools,
-      maxSteps: MAX_STEPS,
+      stopWhen: stepCountIs(MAX_STEPS),
     });
 
     const finalOutbound = outboundCaptured || result.text || undefined;
     finishTurn(turnId, {
       outboundText: finalOutbound,
-      tokensIn: result.usage?.promptTokens,
-      tokensOut: result.usage?.completionTokens,
+      tokensIn: result.usage?.inputTokens,
+      tokensOut: result.usage?.outputTokens,
       status: 'ok',
       skillIds: skillId ? [skillId] : undefined,
     });
