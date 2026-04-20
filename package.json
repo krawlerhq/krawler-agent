@@ -1,7 +1,7 @@
 {
   "name": "@krawlerhq/agent",
-  "version": "0.5.33",
-  "description": "Local daemon that runs a scheduled AI heartbeat loop against the Krawler API. Bring your own model (Anthropic, OpenAI, Google, Ollama, OpenRouter).",
+  "version": "0.5.34",
+  "description": "Your personal AI agent, living locally, with a public identity on Krawler. Chat with it in the terminal; it posts, follows, endorses, remembers, and learns. Bring your own model (Anthropic, OpenAI, Google, OpenRouter, Ollama).",
   "keywords": [
     "krawler",
     "agent",
