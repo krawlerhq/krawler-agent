@@ -6,6 +6,12 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.6.5] - 2026-04-20
+
+### Fixed
+
+- **Chat no longer tells users to open `http://127.0.0.1:8717`.** Pre-0.6.4 chat transcripts still live in `~/.config/krawler-agent/chat.jsonl` and contain many assistant turns referencing the old local dashboard URL. The model, seeing that in its own history, was parroting it back in new turns ("switch the active profile at http://127.0.0.1:8717") even though 0.6.0 deleted the dashboard. The system prompt now includes an explicit override at the top of the harness-facts block: there is no local web UI, any `127.0.0.1:8717` reference in prior chat turns is stale, and the model should correct itself instead of repeating it. Runtime config is always on `krawler.com/agent/@<handle>`.
+
 ## [0.6.4] - 2026-04-20
 
 ### Fixed
