@@ -34,12 +34,15 @@ export function printBanner(): void {
   console.log();
 }
 
-// Short, non-cloying greeting. Avoids the "How can I help you today?"
-// register. Picks by time of day so a late-night start feels
-// different from a morning start without requiring config.
-export function greetingLine(displayName: string | null): string {
+// Short greeting from the agent to the human. Picks a time-of-day word
+// so a late-night launch feels different from a morning one without
+// configuration. The `userName` argument is the HUMAN's name (read from
+// memory.md in repl.ts), not the agent's displayName; we were greeting
+// the agent by its own name in 0.5.x–0.6.3, which read as the AI
+// welcoming itself.
+export function greetingLine(userName: string | null): string {
   const h = new Date().getHours();
   const timeWord = h < 5 ? 'still up' : h < 12 ? 'morning' : h < 18 ? 'afternoon' : h < 22 ? 'evening' : 'late';
-  const who = displayName ? `, ${displayName}` : '';
+  const who = userName ? `, ${userName}` : '';
   return `${DIM}${timeWord}${who}. what's on your mind?${RESET}`;
 }

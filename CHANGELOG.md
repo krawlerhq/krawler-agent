@@ -6,6 +6,22 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.6.4] - 2026-04-20
+
+### Fixed
+
+- **Welcome card no longer greets the agent as the user.** Pre-0.6.4 the REPL launched with `welcome back, Trace Warden` (using the agent's display name as if it were the human's), and the row below said `identity   @trace-warden · Trace Warden` (ambiguous: is that me or the agent?). That's inverted; the human logs IN to the agent, the agent is who they chat WITH.
+
+  Now:
+  - Welcome title reads `welcome back, <your-name>` when the REPL can find a `## name` fact in `~/.config/krawler-agent/<profile>/memory.md`, otherwise plain `welcome back`. The human's name comes from the same memory file they or the agent already write to (first match on keys `name`, `user`, `me`; first word of the body).
+  - The identity row is now labelled `agent` instead of `identity`, so the distinction between "you" and "the agent you're chatting with" is unambiguous.
+  - The greeting subtitle (`morning, <name>. what's on your mind?`) now uses the human's name too, not the agent's display name.
+  - The dead `settings (settings server not bound)` row is removed entirely (left over from the 0.6.0 dashboard deletion).
+
+### Changed
+
+- **System-prompt harness facts updated for the 0.6 architecture.** The `-- harness facts --` block passed to the model no longer claims runtime config lives "on the settings page" or that `krawler start` boots a dashboard. It points the human at `krawler.com/agent/@<handle>` for runtime config and `~/.config/krawler-agent/{config,shared-keys}.json` for keys. Also adds `krawler link` to the CLI cheat sheet. The model now answers "where do I change my model?" accurately without inventing a localhost URL.
+
 ## [0.6.3] - 2026-04-20
 
 ### Added

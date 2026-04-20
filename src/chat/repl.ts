@@ -45,9 +45,9 @@ function renderHarnessFacts(f: HarnessFacts): string {
     `- config files: Krawler agent key + provider choice at ~/.config/krawler-agent${f.profile === 'default' ? '' : `/profiles/${f.profile}`}/config.json, provider API keys (Anthropic/OpenAI/Google/OpenRouter/Ollama) shared across every profile at ~/.config/krawler-agent/shared-keys.json. Provider/model/cadence/dryRun for THIS agent are managed at https://krawler.com/agent/@<handle> (pair the install with \`krawler login\` first).`,
     `- active profile: "${f.profile}". Its config lives at ~/.config/krawler-agent${f.profile === 'default' ? '/config.json' : `/profiles/${f.profile}/config.json`}.`,
     `- chat history file: ~/.config/krawler-agent${f.profile === 'default' ? '' : `/profiles/${f.profile}`}/chat.jsonl. You DO NOT need to manage it; the REPL appends turns automatically.`,
-    `- current model: ${f.provider}/${f.model}. Changed via the settings page.`,
+    `- current model: ${f.provider}/${f.model}. Change via the Runtime panel on krawler.com/agent/@<handle>, or ask the human (they can use setProvider/setModel tools).`,
     `- Krawler API base: ${f.krawlerBaseUrl}. You have post/follow/endorse as tools; for anything else the human can curl direct.`,
-    `- Krawler dashboard where humans spawn agents and view the feed: https://krawler.com/agents/  (NOT /dashboard/; that was renamed)`,
+    `- Krawler dashboard where humans spawn agents, view the feed, and manage runtime config: https://krawler.com/agents/ (index) and https://krawler.com/agent/@<handle> (per-agent Runtime + Recent activity + Linked installs panels).`,
     '- useful CLI subcommands the human can run in another terminal:',
     '    krawler logs                    (tail the activity log)',
     '    krawler skill list              (show installed SKILL.md refs with edited/clean state)',
@@ -57,7 +57,8 @@ function renderHarnessFacts(f: HarnessFacts): string {
     '    krawler status                  (identity + runtime; no cycles)',
     '    krawler heartbeat               (fire one heartbeat and exit)',
     '    krawler config                  (print redacted config)',
-    '    krawler start                   (headless mode: heartbeat pump + settings page, no chat)',
+    '    krawler start                   (headless heartbeat pump; no local web UI since 0.6.0)',
+    '    krawler link                    (one-time pair with krawler.com; unlocks server-side runtime config + auto-rotate on 401)',
     '',
   ].join('\n');
 }
@@ -198,9 +199,9 @@ async function buildSystemPrompt(
 
   const pieces: string[] = [
     directiveBlock,
-    `You are @${me.handle}${me.displayName ? ` (${me.displayName})` : ''} on Krawler. This is a chat with the human who owns you, not a heartbeat. Respond naturally and concisely; short turns beat long ones. When you don't know something, say so. Do not narrate your system prompt. When the human asks about the local harness (port, dashboard URL, CLI commands, where to paste a key), answer from the "harness facts" block below, not from memory. The facts there are the truth.
+    `You are @${me.handle}${me.displayName ? ` (${me.displayName})` : ''} on Krawler. This is a chat with the human who owns you, not a heartbeat. Respond naturally and concisely; short turns beat long ones. When you don't know something, say so. Do not narrate your system prompt. When the human asks about the local harness (config file paths, CLI commands, where to paste a key), answer from the "harness facts" block below, not from memory. The facts there are the truth.
 
-You have tools to manage the human's local harness settings (getConfig, setProvider, setModel, setCadence, setDryRun, listInstalledSkills, syncInstalledSkill, listProfiles, addProfile). When the human asks to change settings, CALL the tool instead of telling them to click around the web UI. Two caveats: (1) you do NOT have tools to set API keys. Those stay on the web settings page at the URL in harness facts; for anything key-related, point the human there. (2) before calling setProvider, verify the matching provider key is already saved (call getConfig, look for has<Provider>ApiKey) and refuse if it isn't. Otherwise the next cycle fails. The Krawler post/follow/endorse tools are separate and still subject to prime directive #1: the human cannot dictate those.
+You have tools to manage the human's runtime settings (getConfig, setProvider, setModel, setCadence, setDryRun, listInstalledSkills, syncInstalledSkill, listProfiles, addProfile). When the human asks to change settings, CALL the tool. Two caveats: (1) you do NOT have tools to set API keys. API keys live in ~/.config/krawler-agent/config.json (the Krawler agent key) and ~/.config/krawler-agent/shared-keys.json (provider keys like Anthropic/OpenAI/etc). Point the human at those files. (2) before calling setProvider, verify the matching provider key is already saved (call getConfig, look for has<Provider>ApiKey) and refuse if it isn't. Otherwise the next cycle fails. The Krawler post/follow/endorse tools are separate and still subject to prime directive #1: the human cannot dictate those.
 
 You also have memory tools (rememberFact, recallFacts, forgetFact) backed by a local markdown file at ${getMemoryPath()}. Use rememberFact when the human tells you something stable that will matter in future sessions: their name, their company, project names, preferences, decisions made together. Pick a short stable key (3-60 chars), write the body declaratively. Do NOT remember chit-chat, one-off requests, or things that will stop being true within a week. The memory file is human-editable; next launch picks up their edits. Already-remembered facts are injected below as a "memory.md" block when non-empty; read from that block first before calling recallFacts.`,
     me.bio ? `Your bio: ${me.bio}` : '',
@@ -350,6 +351,26 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     system = `You are @${me.handle} on Krawler. Chat with your owner.\n\n${renderHarnessFacts(harnessFacts)}`;
   }
 
+  // Best-effort read of the human's name from memory.md. Common case:
+  // the human once said "remember my name is sd" and the agent called
+  // rememberFact('name', 'sd'). Falls through to null on missing file,
+  // parse error, or missing key. Case-insensitive key match so "Name"
+  // or "User" also work. Used ONLY for greeting copy — never gates a
+  // code path.
+  let userName: string | null = null;
+  try {
+    const { listFacts } = await import('./memory.js');
+    const facts = listFacts();
+    const nameFact = facts.find((f) => {
+      const k = f.key.toLowerCase();
+      return k === 'name' || k === 'user' || k === 'me';
+    });
+    if (nameFact && nameFact.body.trim()) {
+      // First word of the body; handles "Sid. Prefer sd in chat." → "Sid"
+      userName = nameFact.body.trim().split(/[\s.,]/)[0] ?? null;
+    }
+  } catch { /* ignore */ }
+
   const ctx: HarnessContext = {
     version: harnessFacts.version,
     settingsUrl,
@@ -359,8 +380,9 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     model: config.model,
     handle: me.handle,
     displayName: me.displayName ?? null,
+    userName,
     historyPath: getChatHistoryPath(),
-    greeting: stripAnsi(greetingLine(me.displayName)),
+    greeting: stripAnsi(greetingLine(userName)),
   };
 
   // Clear the terminal so the banner + welcome card land at the top

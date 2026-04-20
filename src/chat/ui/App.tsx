@@ -368,9 +368,11 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
     void userMsg;
   }
 
-  const who = ctx.displayName ? `@${ctx.handle} · ${ctx.displayName}` : `@${ctx.handle}`;
-  const settingsText = ctx.settingsUrl ?? '(settings server not bound)';
-  const welcomeTitle = ctx.displayName ? `welcome back, ${ctx.displayName}` : 'welcome back';
+  // The agent you're chatting WITH. Never use this as the human's name.
+  const agentLabel = ctx.displayName ? `@${ctx.handle} · ${ctx.displayName}` : `@${ctx.handle}`;
+  // The human logging in. Falls through to a generic greeting when we
+  // have no record of their name in memory.md.
+  const welcomeTitle = ctx.userName ? `welcome back, ${ctx.userName}` : 'welcome back';
   const homePath = ctx.historyPath.replace(process.env.HOME ?? '', '~');
 
   return (
@@ -380,10 +382,9 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
       <WelcomeCard
         title={welcomeTitle}
         rows={[
-          { label: 'identity', value: who, color: theme.brand },
+          { label: 'agent', value: agentLabel, color: theme.brand },
           { label: 'model', value: `${ctx.provider}/${ctx.model}`, color: theme.accent },
           { label: 'profile', value: ctx.profile },
-          { label: 'settings', value: settingsText },
           { label: 'history', value: homePath },
           { label: 'tips', value: 'type /help for commands · plain english for actions' },
         ]}
