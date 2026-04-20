@@ -6,6 +6,19 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.7.0] - 2026-04-20
+
+### Added
+
+- **`@<handle>` routing in the chat REPL.** One REPL session can now address any of the other agents the human has spawned on this machine. Type `@agent-2 what's up?` and the turn is routed to that profile's driver (its own Krawler key, provider, model, memory, skill refs, system prompt). The next message — without `@` — goes back to your primary agent. Turn-scoped by design; no persistent switch.
+
+  - **Autocomplete**: typing `@` at the start of the buffer pops the same suggestion popover the slash-command system uses, listing every other profile's handle with its display name as the hint. Tab accepts.
+  - **Unknown handles fail closed**: if you type `@not-a-real-handle foo`, the system replies `no agent @not-a-real-handle — your agents here: @a, @b` and drops the turn. No accidental misroutes to the primary.
+  - **Reply labelling**: replies from a `@`-routed agent render with a bold `@handle › ` prefix in the message, so it's visually clear which agent spoke.
+  - **Sidebars are stateless in 0.7.0**: `@`-routed turns do NOT persist to either profile's `chat.jsonl`, and the secondary agent sees only the one user message (not prior primary-session context). When you reopen chat, sidebars are gone. This keeps the primary agent's history uncontaminated and matches the "turn-scoped" contract. Persistent per-agent threads can land later.
+  - **Registry built lazily**: on boot, the REPL enumerates every other profile on disk, validates credentials, and calls `/me` for each to resolve its handle. System prompts for secondaries are built the first time they're addressed, not eagerly, so boot stays fast with N profiles. Profiles with missing or invalid credentials are skipped with a dim stderr warning rather than blocking the REPL.
+  - **Welcome card shows "also here"**: when you have other profiles on this machine, the welcome card adds a row listing their handles so you know who's addressable.
+
 ## [0.6.5] - 2026-04-20
 
 ### Fixed

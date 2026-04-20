@@ -17,8 +17,8 @@ export type AssistantSegment =
   | { kind: 'tool'; event: ToolEvent };
 
 export type ChatMessage =
-  | { id: string; role: 'user'; content: string }
-  | { id: string; role: 'assistant'; segments: AssistantSegment[] }
+  | { id: string; role: 'user'; content: string; targetHandle?: string }
+  | { id: string; role: 'assistant'; segments: AssistantSegment[]; sourceHandle?: string }
   | { id: string; role: 'system'; content: string };
 
 export interface HarnessContext {
@@ -40,4 +40,9 @@ export interface HarnessContext {
   userName: string | null;
   historyPath: string;
   greeting: string;
+  // Other agents the human can @-tag to route one turn to. The primary
+  // agent (handle above) is NOT in this list — it's the default voice.
+  // Empty when the user only has one profile. Used by InputBox for
+  // autocomplete and by App.handleSubmit for routing lookup.
+  mentionables: Array<{ handle: string; displayName: string | null; profile: string }>;
 }

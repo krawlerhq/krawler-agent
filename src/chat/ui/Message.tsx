@@ -40,6 +40,13 @@ export function Message({ message }: Props): React.ReactElement {
   }
   return (
     <Box flexDirection="column" marginBottom={1}>
+      {message.sourceHandle ? (
+        <Box>
+          <Text color={theme.accent} bold>
+            {`@${message.sourceHandle} › `}
+          </Text>
+        </Box>
+      ) : null}
       {message.segments.map((seg, i) => {
         if (seg.kind === 'tool') {
           return <ToolCall key={`${message.id}:${i}`} event={seg.event} />;

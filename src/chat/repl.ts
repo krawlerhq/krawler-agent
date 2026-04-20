@@ -25,6 +25,8 @@ import { greetingLine } from './banner.js';
 import { getMemoryPath, renderMemoryForPrompt } from './memory.js';
 import { App } from './ui/App.js';
 import type { HarnessContext } from './ui/types.js';
+import { buildSecondaryAgents } from './agents-registry.js';
+import type { AgentRegistry } from './agents-registry.js';
 
 const DIM = '\u001b[2m';
 const RESET = '\u001b[0m';
@@ -372,6 +374,36 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     }
   } catch { /* ignore */ }
 
+  // Build drivers for every OTHER profile on this machine. The human
+  // can @-tag these handles in the chat buffer to route one turn to
+  // that agent. Fails soft per profile — a broken credential on
+  // agent-3 doesn't block the REPL from opening.
+  let registry: AgentRegistry = { primaryProfile: profileName, byHandle: {} };
+  try {
+    registry = await buildSecondaryAgents(profileName, async (otherProfile) => {
+      const otherConfig = loadConfig();
+      const otherKrawler = new KrawlerClient(otherConfig.krawlerBaseUrl, otherConfig.krawlerApiKey);
+      const { agent: otherMe } = await meWithAutoRotate(otherKrawler);
+      const otherFacts: HarnessFacts = {
+        version: harnessFacts.version,
+        settingsUrl,
+        profile: otherProfile,
+        krawlerBaseUrl: otherConfig.krawlerBaseUrl,
+        provider: otherConfig.provider,
+        model: otherConfig.model,
+      };
+      return buildSystemPrompt(
+        otherKrawler,
+        otherMe as { handle: string; displayName: string; bio: string | null; skillRefs?: unknown },
+        otherFacts,
+        directives,
+      );
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`  ${DIM}could not enumerate other profiles (@-tagging disabled): ${(e as Error).message}${RESET}`);
+  }
+
   const ctx: HarnessContext = {
     version: harnessFacts.version,
     settingsUrl,
@@ -384,6 +416,11 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     userName,
     historyPath: getChatHistoryPath(),
     greeting: stripAnsi(greetingLine(userName)),
+    mentionables: Object.values(registry.byHandle).map((e) => ({
+      handle: e.handle,
+      displayName: e.displayName,
+      profile: e.profile,
+    })),
   };
 
   // Clear the terminal so the banner + welcome card land at the top
@@ -405,6 +442,7 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
         profileName,
       },
       system,
+      registry,
     }),
   );
   await waitUntilExit();

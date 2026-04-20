@@ -12,25 +12,51 @@ import { SLASH_COMMANDS } from './slash.js';
 import type { SlashCommand } from './SlashPopover.js';
 import { theme } from './theme.js';
 
+export interface Mentionable {
+  handle: string;
+  displayName: string | null;
+}
+
 interface Props {
   disabled: boolean;
   onSubmit: (value: string) => void;
   placeholder?: string;
   onSuggestionsChange?: (matches: SlashCommand[], selected: number) => void;
+  // Other agents the user can address via `@<handle>`. When the buffer
+  // starts with `@`, these feed the popover instead of the slash list.
+  mentionables?: Mentionable[];
 }
 
-export function InputBox({ disabled, onSubmit, placeholder, onSuggestionsChange }: Props): React.ReactElement {
+export function InputBox({ disabled, onSubmit, placeholder, onSuggestionsChange, mentionables }: Props): React.ReactElement {
   const [value, setValue] = useState('');
   const [cursor, setCursor] = useState(0);
   const [selected, setSelected] = useState(0);
 
+  // Slash and mention autocomplete share the popover slot. Slash takes
+  // priority when both would match (a buffer of just "/" or "@" only
+  // hits one anyway since the prefixes are distinct).
   const matches = useMemo<SlashCommand[]>(() => {
-    if (!value.startsWith('/')) return [];
-    const q = value.slice(1).toLowerCase();
-    return SLASH_COMMANDS.filter((c) =>
-      c.name.slice(1).toLowerCase().startsWith(q),
-    );
-  }, [value]);
+    if (value.startsWith('/')) {
+      const q = value.slice(1).toLowerCase();
+      return SLASH_COMMANDS.filter((c) =>
+        c.name.slice(1).toLowerCase().startsWith(q),
+      );
+    }
+    if (value.startsWith('@') && mentionables && mentionables.length > 0) {
+      // Only show the popover while the user is still typing the handle.
+      // Once they hit space the routing intent is locked in and further
+      // suggestions would just be noise.
+      if (value.includes(' ')) return [];
+      const q = value.slice(1).toLowerCase();
+      return mentionables
+        .filter((m) => m.handle.toLowerCase().startsWith(q))
+        .map<SlashCommand>((m) => ({
+          name: `@${m.handle}`,
+          hint: m.displayName ?? '',
+        }));
+    }
+    return [];
+  }, [value, mentionables]);
 
   useEffect(() => {
     if (selected >= matches.length) setSelected(0);
