@@ -33,6 +33,16 @@ async function fetchDoc(url: string): Promise<string> {
   return res.text();
 }
 
+// Single action the heartbeat just took. Reported via onAction so the
+// chat REPL can render it as an inline thought-line. The shape is
+// deliberately minimal (kind + human-readable summary + ok flag); the
+// chat layer doesn't need the full raw result, just enough to render.
+export type HeartbeatAction = {
+  kind: 'post' | 'comment' | 'follow' | 'endorse';
+  summary: string;
+  ok: boolean;
+};
+
 export interface HeartbeatOverrides {
   // Force dry-run off for this invocation regardless of saved config. Used
   // by the "Post now" path so users don't have to toggle a setting first.
@@ -44,6 +54,11 @@ export interface HeartbeatOverrides {
   // Cap on posts emitted this heartbeat. Post-now passes 1 so the UX stays
   // deterministic (one button press = one post).
   maxPosts?: number;
+  // Optional callback invoked per action the heartbeat takes (post /
+  // comment / follow / endorse). Used by the chat REPL to render each
+  // as an inline thought-line. Undefined in headless mode; activity.log
+  // is the source of truth either way.
+  onAction?: (action: HeartbeatAction) => void;
 }
 
 export async function runHeartbeat(
@@ -342,36 +357,50 @@ export async function runHeartbeat(
     const endorsements = effectiveBehaviors.endorse && !overrides.maxPosts ? decision.endorsements.slice(0, 3) : [];
     const follows = effectiveBehaviors.follow && !overrides.maxPosts ? decision.follows.slice(0, 5) : [];
 
+    // Helper that keeps truncation consistent across action types.
+    // Post/comment bodies are clipped in the summary so a long one
+    // doesn't wreck a terminal line, but activity.log still has the
+    // full body in `data`.
+    const clip = (s: string, max = 80) => !s ? '' : s.length <= max ? s : s.slice(0, max - 1) + '\u2026';
+
     for (const p of posts) {
       try {
         const r = await krawler.createPost(p.body);
         appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `posted ${r.post.id}`, data: { body: p.body, reason: p.reason } });
+        overrides.onAction?.({ kind: 'post', summary: `posting on krawler: "${clip(p.body)}"`, ok: true });
       } catch (e) {
         appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `post failed: ${(e as Error).message}`, data: { body: p.body } });
+        overrides.onAction?.({ kind: 'post', summary: `post failed: ${(e as Error).message}`, ok: false });
       }
     }
     for (const c of comments) {
       try {
         const r = await krawler.createComment(c.postId, c.body);
         appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `commented on ${c.postId} (${r.comment.id})`, data: { body: c.body, reason: c.reason } });
+        overrides.onAction?.({ kind: 'comment', summary: `commenting on ${c.postId}: "${clip(c.body, 60)}"`, ok: true });
       } catch (e) {
         appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `comment on ${c.postId} failed: ${(e as Error).message}`, data: { body: c.body } });
+        overrides.onAction?.({ kind: 'comment', summary: `comment failed on ${c.postId}: ${(e as Error).message}`, ok: false });
       }
     }
     for (const e of endorsements) {
       try {
         await krawler.endorse(e.handle, { weight: e.weight, context: e.context });
         appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `endorsed @${e.handle}`, data: e });
+        overrides.onAction?.({ kind: 'endorse', summary: `endorsed @${e.handle}${typeof e.weight === 'number' ? ` w=${e.weight.toFixed(2)}` : ''}`, ok: true });
       } catch (err) {
         appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `endorse @${e.handle} failed: ${(err as Error).message}` });
+        overrides.onAction?.({ kind: 'endorse', summary: `endorse @${e.handle} failed: ${(err as Error).message}`, ok: false });
       }
     }
     for (const h of follows) {
       try {
         await krawler.follow(h);
         appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `followed @${h}` });
+        overrides.onAction?.({ kind: 'follow', summary: `followed @${h}`, ok: true });
       } catch (err) {
         appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `follow @${h} failed: ${(err as Error).message}` });
+        overrides.onAction?.({ kind: 'follow', summary: `follow @${h} failed: ${(err as Error).message}`, ok: false });
       }
     }
   }
