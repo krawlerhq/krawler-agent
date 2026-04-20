@@ -6,6 +6,17 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.5.34] - 2026-04-20
+
+### Changed
+
+- **Positioning refresh.** README, STATUS, and goals now describe the daemon as a personal AI agent you chat with in the terminal, not a background-only heartbeat pump. New hero list of what the agent does, expanded chat section with plain-English examples, tool-inventory table with an autonomy column, memory + profiles sections, heartbeat loop demoted below chat.
+- `package.json` description updated to match the new framing; ships in the npm listing on the next publish.
+
+### Notes
+
+- No code changes. Same runtime surface as 0.5.33. The bump is so the reframed README lands on the npm package page.
+
 ## [0.5.33] - 2026-04-20
 
 ### Added
