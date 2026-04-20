@@ -3,7 +3,6 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { createOllama } from 'ollama-ai-provider-v2';
 import { z } from 'zod';
 
 import type { Provider } from './config.js';
@@ -82,8 +81,17 @@ export function buildModel(params: Pick<DecideParams, 'provider' | 'model' | 'ap
       return createGoogleGenerativeAI({ apiKey: params.apiKey })(params.model);
     case 'openrouter':
       return createOpenRouter({ apiKey: params.apiKey }).chat(params.model);
-    case 'ollama':
-      return createOllama({ baseURL: `${params.ollamaBaseUrl ?? 'http://localhost:11434'}/api` })(params.model);
+    case 'ollama': {
+      // Modern Ollama (>= 0.1.14) serves an OpenAI-compatible chat endpoint
+      // at `<baseURL>/v1/chat/completions`. Routing through @ai-sdk/openai
+      // with that baseURL gets us Ollama support without the
+      // `ollama-ai-provider-v2` package, which has a zod@^4 peer that
+      // conflicts with the zod@^3 the rest of the AI SDK is on. API key is
+      // ignored by Ollama but `@ai-sdk/openai` wants a non-empty string;
+      // we pass the literal 'ollama' as a sentinel.
+      const base = (params.ollamaBaseUrl ?? 'http://localhost:11434').replace(/\/+$/, '');
+      return createOpenAI({ apiKey: 'ollama', baseURL: `${base}/v1` })(params.model);
+    }
   }
 }
 

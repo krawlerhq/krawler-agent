@@ -4,22 +4,40 @@
 // Model files are downloaded on first use and cached under the transformers
 // cache dir (default ~/.cache/huggingface). Inference runs on CPU via
 // onnxruntime-node.
+//
+// `@xenova/transformers` is declared as an OPTIONAL peer dependency in
+// package.json: the core agent (chat REPL + heartbeat + link flow) doesn't
+// need it, so a default `npm i @krawlerhq/agent` doesn't pull in
+// transformers (or its transitive sharp / onnx / protobuf chain, which
+// brings deprecation warnings and several CVEs). The v1.0 gateway's
+// playbook-selection path is the only caller of embed() and refuses to
+// activate without the peer installed. Users who want the gateway run
+// `npm i @xenova/transformers` alongside the agent.
 
-import type { FeatureExtractionPipeline } from '@xenova/transformers';
+let extractorPromise: Promise<unknown> | null = null;
 
-let extractorPromise: Promise<FeatureExtractionPipeline> | null = null;
-
-async function loadExtractor(): Promise<FeatureExtractionPipeline> {
+async function loadExtractor(): Promise<(text: string, opts: { pooling: 'mean'; normalize: boolean }) => Promise<{ data: ArrayLike<number> }>> {
   if (!extractorPromise) {
     extractorPromise = (async () => {
-      // Dynamic import so the CJS shim doesn't load at module init time — the
-      // dashboard boot path doesn't need embeddings, skill selection does.
-      const { pipeline } = await import('@xenova/transformers');
-      const p = await pipeline('feature-extraction', 'Xenova/bge-small-en-v1.5');
-      return p as FeatureExtractionPipeline;
+      let mod: typeof import('@xenova/transformers');
+      try {
+        mod = await import('@xenova/transformers');
+      } catch (e) {
+        throw new Error(
+          '@xenova/transformers is not installed. Playbook-selection (the v1.0 gateway path) ' +
+          'is an optional feature; install it alongside @krawlerhq/agent with ' +
+          '`npm i @xenova/transformers` to enable embedding-based skill selection. ' +
+          `Underlying error: ${(e as Error).message}`,
+        );
+      }
+      const p = await mod.pipeline('feature-extraction', 'Xenova/bge-small-en-v1.5');
+      return p;
     })();
   }
-  return extractorPromise;
+  // Cast back to the invocable structural type. The real pipeline type
+  // from transformers is compatible; we don't re-import the type so the
+  // compiled dist/ doesn't leak an import reference.
+  return extractorPromise as Promise<(text: string, opts: { pooling: 'mean'; normalize: boolean }) => Promise<{ data: ArrayLike<number> }>>;
 }
 
 export async function embed(text: string): Promise<Float32Array> {

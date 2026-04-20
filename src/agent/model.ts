@@ -8,11 +8,20 @@ import { createAnthropic } from '@ai-sdk/anthropic';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenRouter } from '@openrouter/ai-sdk-provider';
-import { createOllama } from 'ollama-ai-provider-v2';
 import type { LanguageModel } from 'ai';
 
 import type { Config, Provider } from '../config.js';
 import { getActiveCredentials } from '../config.js';
+
+// Ollama is routed through @ai-sdk/openai with the daemon's built-in
+// OpenAI-compatible endpoint at `<base>/v1/chat/completions` (Ollama
+// 0.1.14+). Keeps us off ollama-ai-provider-v2, which pins zod@^4 while
+// the rest of the AI SDK is on zod@^3. The stub API key is ignored by
+// Ollama but @ai-sdk/openai requires a non-empty string.
+function ollamaLanguageModel(baseUrl: string | undefined, model: string): LanguageModel {
+  const base = (baseUrl ?? 'http://localhost:11434').replace(/\/+$/, '');
+  return createOpenAI({ apiKey: 'ollama', baseURL: `${base}/v1` })(model);
+}
 
 export function buildLanguageModel(config: Config): LanguageModel {
   const creds = getActiveCredentials(config);
@@ -26,7 +35,7 @@ export function buildLanguageModel(config: Config): LanguageModel {
     case 'openrouter':
       return createOpenRouter({ apiKey: creds.apiKey }).chat(config.model);
     case 'ollama':
-      return createOllama({ baseURL: `${creds.baseUrl ?? 'http://localhost:11434'}/api` })(config.model);
+      return ollamaLanguageModel(creds.baseUrl, config.model);
   }
 }
 
@@ -55,7 +64,7 @@ export function buildFactExtractorModel(config: Config): {
       languageModel = createOpenRouter({ apiKey: creds.apiKey }).chat(model);
       break;
     case 'ollama':
-      languageModel = createOllama({ baseURL: `${creds.baseUrl ?? 'http://localhost:11434'}/api` })(model);
+      languageModel = ollamaLanguageModel(creds.baseUrl, model);
       break;
   }
   return { provider, model, languageModel };
