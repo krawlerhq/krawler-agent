@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
-import { currentProfileName, profileDir } from './profile-context.js';
+import { currentProfileName, DEFAULT_PROFILE, profileDir } from './profile-context.js';
 
 // Multi-agent support. Every filesystem path is a runtime getter that
 // resolves to the current profile's directory:
@@ -33,6 +33,18 @@ export function getBlobsDir(): string { return join(getConfigDir(), 'blobs'); }
 // edits back as a PR to the source repo. See design note in
 // src/skill-refs.ts.
 export function getInstalledSkillsDir(): string { return join(getConfigDir(), 'installed-skills'); }
+
+// Provider credentials live at the machine root, shared across all
+// profiles on the install. The mental model: a Krawler agent key is
+// PER-AGENT (so it's in per-profile config.json), but your Anthropic
+// / OpenAI / Google / OpenRouter / Ollama credentials are YOUR
+// accounts — every agent you spawn on this machine uses the same
+// ones. Storing them per-profile made users paste the same key over
+// and over every time they added a profile. Path sits alongside the
+// default profile's config.json in `~/.config/krawler-agent/`.
+export function getSharedKeysPath(): string {
+  return join(profileDir(DEFAULT_PROFILE), 'shared-keys.json');
+}
 
 // One-time migration: if the old skills/ dir exists and the new
 // playbooks/ dir doesn't, rename. Idempotent on repeat boots. Safe to
@@ -139,31 +151,143 @@ function ensureDir() {
   if (!existsSync(getConfigDir())) mkdirSync(getConfigDir(), { recursive: true, mode: 0o700 });
 }
 
+// Shared provider-credentials store. Lives at
+// ~/.config/krawler-agent/shared-keys.json. All profiles overlay
+// these values on top of whatever their own config.json has, so
+// pasting an Anthropic key once covers every agent you spawn.
+const sharedKeysSchema = z.object({
+  anthropicApiKey: z.string().default(''),
+  openaiApiKey: z.string().default(''),
+  googleApiKey: z.string().default(''),
+  openrouterApiKey: z.string().default(''),
+  ollamaBaseUrl: z.string().url().default('http://localhost:11434'),
+});
+
+type SharedKeys = z.infer<typeof sharedKeysSchema>;
+
+const SHARED_KEY_FIELDS = [
+  'anthropicApiKey',
+  'openaiApiKey',
+  'googleApiKey',
+  'openrouterApiKey',
+  'ollamaBaseUrl',
+] as const satisfies ReadonlyArray<keyof SharedKeys>;
+
+function ensureDefaultProfileDir(): void {
+  const dir = profileDir(DEFAULT_PROFILE);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
+}
+
+export function loadSharedKeys(): SharedKeys {
+  ensureDefaultProfileDir();
+  const path = getSharedKeysPath();
+  if (!existsSync(path)) {
+    return sharedKeysSchema.parse({});
+  }
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8'));
+    const parsed = sharedKeysSchema.safeParse(raw);
+    if (parsed.success) return parsed.data;
+    return { ...sharedKeysSchema.parse({}), ...(raw ?? {}) };
+  } catch {
+    return sharedKeysSchema.parse({});
+  }
+}
+
+export function saveSharedKeys(partial: Partial<SharedKeys>): SharedKeys {
+  ensureDefaultProfileDir();
+  const current = loadSharedKeys();
+  const merged = sharedKeysSchema.parse({ ...current, ...partial });
+  const path = getSharedKeysPath();
+  writeFileSync(path, JSON.stringify(merged, null, 2) + '\n', { mode: 0o600 });
+  try { chmodSync(path, 0o600); } catch { /* ignore */ }
+  return merged;
+}
+
+// First-run migration. If shared-keys.json doesn't exist yet but the
+// default profile's config.json was populated under the old model,
+// hoist those keys into the shared store so the human doesn't need
+// to re-paste. Idempotent — a no-op once the shared file exists.
+function migrateProviderKeysToShared(): void {
+  if (existsSync(getSharedKeysPath())) return;
+  const defaultConfigPath = join(profileDir(DEFAULT_PROFILE), 'config.json');
+  if (!existsSync(defaultConfigPath)) return;
+  try {
+    const raw = JSON.parse(readFileSync(defaultConfigPath, 'utf8')) as Partial<Record<typeof SHARED_KEY_FIELDS[number], string>>;
+    const pick: Partial<SharedKeys> = {};
+    let hasAny = false;
+    for (const f of SHARED_KEY_FIELDS) {
+      const v = raw[f];
+      if (typeof v === 'string' && v.length > 0) {
+        (pick as Record<string, string>)[f] = v;
+        hasAny = true;
+      }
+    }
+    if (hasAny) saveSharedKeys(pick);
+  } catch { /* non-fatal */ }
+}
+
 export function loadConfig(): Config {
   ensureDir();
+  migrateProviderKeysToShared();
+  const shared = loadSharedKeys();
   if (!existsSync(getConfigPath())) {
     const initial = configSchema.parse({});
     saveConfig(initial);
-    return initial;
+    return { ...initial, ...shared };
   }
   const raw = JSON.parse(readFileSync(getConfigPath(), 'utf8'));
   const parsed = configSchema.safeParse(raw);
-  if (!parsed.success) {
-    const fallback = configSchema.parse({});
-    return { ...fallback, ...(raw ?? {}) };
-  }
-  return parsed.data;
+  const base = parsed.success
+    ? parsed.data
+    : { ...configSchema.parse({}), ...(raw ?? {}) };
+  // Shared keys overlay the per-profile config. The per-profile file
+  // may still have stale copies from pre-0.5.36 installs; those get
+  // ignored here so the shared store is always the source of truth.
+  return { ...base, ...shared };
 }
 
 export function saveConfig(c: Partial<Config>): Config {
   ensureDir();
+  // Split the partial: provider-credential fields route to the shared
+  // store, everything else stays in the per-profile config.json. This
+  // way setting your Anthropic key from any profile updates the one
+  // copy every other profile also reads.
+  const sharedPartial: Partial<SharedKeys> = {};
+  const profilePartial: Partial<Config> = {};
+  for (const [k, v] of Object.entries(c)) {
+    if ((SHARED_KEY_FIELDS as readonly string[]).includes(k)) {
+      (sharedPartial as Record<string, unknown>)[k] = v;
+    } else {
+      (profilePartial as Record<string, unknown>)[k] = v;
+    }
+  }
+  let shared: SharedKeys;
+  if (Object.keys(sharedPartial).length > 0) {
+    shared = saveSharedKeys(sharedPartial);
+  } else {
+    shared = loadSharedKeys();
+  }
   const current = existsSync(getConfigPath())
     ? (JSON.parse(readFileSync(getConfigPath(), 'utf8')) as Partial<Config>)
     : {};
-  const merged = configSchema.parse({ ...current, ...c });
-  writeFileSync(getConfigPath(), JSON.stringify(merged, null, 2) + '\n', { mode: 0o600 });
+  // Strip any stale provider-key copies off the per-profile config so
+  // the on-disk file mirrors the new "profiles never store provider
+  // keys" rule. The shared file is now the only authoritative source.
+  for (const f of SHARED_KEY_FIELDS) {
+    delete (current as Record<string, unknown>)[f];
+  }
+  const mergedProfile = configSchema.parse({ ...current, ...profilePartial, ...shared });
+  // Write out the per-profile slice (without the shared keys) so the
+  // on-disk file stays minimal. We still return the fully-merged view
+  // for the caller.
+  const onDisk: Partial<Config> = { ...mergedProfile };
+  for (const f of SHARED_KEY_FIELDS) {
+    delete (onDisk as Record<string, unknown>)[f];
+  }
+  writeFileSync(getConfigPath(), JSON.stringify(onDisk, null, 2) + '\n', { mode: 0o600 });
   try { chmodSync(getConfigPath(), 0o600); } catch { /* ignore */ }
-  return merged;
+  return mergedProfile;
 }
 
 // Masked preview of a secret, e.g. "sk-ant-ap••••••z9" or "kra_live_ab••••xy9".

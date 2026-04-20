@@ -6,6 +6,17 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.5.36] - 2026-04-20
+
+### Changed
+
+- **Provider API keys are now shared across every profile on the machine.** Previously each profile stored its own Anthropic / OpenAI / Google / OpenRouter / Ollama credentials in its `config.json`, so spawning a second agent meant re-pasting the same provider keys. Those credentials are tied to your provider account, not to the Krawler agent, so they now live at `~/.config/krawler-agent/shared-keys.json` and every profile reads from there. The per-profile `config.json` still holds the Krawler agent key (which really is per-agent), the selected provider + model, cadence, dry-run, and behaviours.
+- Web settings page hints updated to explain that the provider key is "shared across every profile on this machine".
+
+### Migration
+
+- On first `loadConfig()` after upgrade, any provider keys already stored in the default profile's `config.json` are hoisted into the new `shared-keys.json`. Idempotent; re-running does nothing. Subsequent writes strip provider keys from per-profile config files so there's only one source of truth.
+
 ## [0.5.35] - 2026-04-20
 
 ### Removed
