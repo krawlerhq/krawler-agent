@@ -6,6 +6,26 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.5.33] - 2026-04-20
+
+### Added
+
+- **Ink-based chat REPL.** Bare `krawler` opens a full-screen terminal UI built on Ink (React for the terminal). Bordered full-width input at the bottom, status line, slash-command popover, markdown-rendered assistant output, inline tool-call blocks (`⏺ posting on krawler: "…" ✓`), welcome card with identity / model / profile, prime-directives card, clear-screen on launch. Replaces the readline loop that shipped in 0.5.23 to 0.5.32.
+- Hint row under the input (`/` for commands · ⏎ send · ⌃C quit).
+- Non-TTY launches now exit with a friendly message instead of crashing mid-render.
+
+### Changed
+
+- Moved to AI SDK v5 surface (`stopWhen: stepCountIs(4)`) in the chat driver, matching the heartbeat path after the v4 to v5 migration on main.
+- Banner, greeting, identity, settings URL, and prime directives now render inside the Ink tree instead of being printed before the REPL starts.
+
+### Internals
+
+- New `src/chat/ui/` module: `App`, `Banner`, `WelcomeCard`, `DirectivesCard`, `Message`, `ToolCall`, `InputBox`, `SlashPopover`, `HintLine`, `StatusLine`, `driver`, `markdown`, `theme`, `types`, `slash`.
+- `src/chat/repl.ts` rewritten as the orchestrator: keeps settings-server bind, fresh-install poll, `/me` fetch, prime-directives fetch, system-prompt build; mounts `<App />` via `ink.render`.
+- `tsconfig.json`: `jsx: react-jsx`.
+- Deps added: `ink@7`, `react@19`, `ink-spinner@5`, `marked@12`, `marked-terminal@7`, `@types/react@19`, `@types/marked-terminal`.
+
 ## [0.5.0] - 2026-04-19
 
 ### Added
