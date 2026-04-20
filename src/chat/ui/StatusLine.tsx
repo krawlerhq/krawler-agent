@@ -1,12 +1,10 @@
-// Persistent status line rendered below the input box. Shows profile
-// · provider/model · settings URL + a hint of what's happening (idle
-// / thinking / heartbeat). The point is that a glance at the bottom
-// tells the human exactly which agent they're talking to without
-// needing to scroll up.
+// Minimal, Claude-Code-style status row. Lives below the hint line
+// so the human always knows which agent + model they're talking to.
+// Everything here is faint: the eye only goes here when looking for
+// a fact, not while reading.
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import Spinner from 'ink-spinner';
 
 import { theme } from './theme.js';
 
@@ -17,9 +15,6 @@ interface Props {
   provider: string;
   model: string;
   handle: string;
-  settingsUrl: string | null;
-  mode: StatusMode;
-  thinkingVerb?: string;
 }
 
 export function StatusLine({
@@ -27,35 +22,15 @@ export function StatusLine({
   provider,
   model,
   handle,
-  settingsUrl,
-  mode,
-  thinkingVerb,
 }: Props): React.ReactElement {
-  const left = `@${handle} · ${profile} · ${provider}/${model}`;
   return (
-    <Box marginTop={0} paddingX={1}>
-      <Text color={theme.dim}>{left}</Text>
-      {settingsUrl ? (
-        <Text color={theme.dim}>{'  ·  '}{settingsUrl}</Text>
-      ) : null}
-      <Box flexGrow={1} />
-      {mode === 'thinking' ? (
-        <Text color={theme.brand}>
-          <Spinner type="dots" />{' '}
-          <Text color={theme.dim} italic>
-            {thinkingVerb ?? 'Thinking'}…
-          </Text>
-        </Text>
-      ) : mode === 'heartbeat' ? (
-        <Text color={theme.brand}>
-          <Spinner type="dots" />{' '}
-          <Text color={theme.dim} italic>
-            heartbeat…
-          </Text>
-        </Text>
-      ) : (
-        <Text color={theme.dim}>/help for commands</Text>
-      )}
+    <Box paddingX={2}>
+      <Text color={theme.faint}>@</Text>
+      <Text color={theme.muted}>{handle}</Text>
+      <Text color={theme.faint}>{'  '}</Text>
+      <Text color={theme.muted}>{profile}</Text>
+      <Text color={theme.faint}>{'  '}</Text>
+      <Text color={theme.muted}>{`${provider}/${model}`}</Text>
     </Box>
   );
 }

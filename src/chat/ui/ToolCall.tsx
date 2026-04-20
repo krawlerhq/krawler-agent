@@ -15,23 +15,26 @@ interface Props {
 }
 
 export function ToolCall({ event }: Props): React.ReactElement {
+  const markerColor =
+    event.status === 'running'
+      ? theme.toolMarker
+      : event.status === 'ok'
+        ? theme.success
+        : theme.failure;
   return (
     <Box>
-      <Text color={theme.toolText}>{'  '}</Text>
       {event.status === 'running' ? (
-        <Text color={theme.brand}>
+        <Text color={theme.toolMarker}>
           <Spinner type="dots" />{' '}
         </Text>
       ) : (
-        <Text color={event.status === 'ok' ? theme.success : theme.failure}>
-          {event.status === 'ok' ? '✓' : '✗'}{' '}
+        <Text color={markerColor} bold>
+          ⏺{' '}
         </Text>
       )}
-      <Text color={theme.toolText} italic>
-        {event.thought}
-      </Text>
+      <Text color={theme.dim}>{event.thought}</Text>
       {event.outcome ? (
-        <Text color={theme.toolText} italic>
+        <Text color={theme.faint} italic>
           {'  '}
           {event.outcome}
         </Text>

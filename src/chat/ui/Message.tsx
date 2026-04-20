@@ -20,19 +20,21 @@ export function Message({ message }: Props): React.ReactElement {
     return (
       <Box marginBottom={1}>
         <Text color={theme.userPrompt} bold>
-          {'> '}
+          {'❯ '}
         </Text>
-        <Text>{message.content}</Text>
+        <Text color={theme.dim}>{message.content}</Text>
       </Box>
     );
   }
   if (message.role === 'system') {
     return (
-      <Box marginBottom={1}>
-        <Text color={theme.dim} italic>
-          {'  '}
-          {message.content}
-        </Text>
+      <Box marginBottom={1} flexDirection="column">
+        {message.content.split('\n').map((ln, i) => (
+          <Text key={i} color={theme.faint} italic>
+            {'  '}
+            {ln}
+          </Text>
+        ))}
       </Box>
     );
   }
@@ -43,14 +45,8 @@ export function Message({ message }: Props): React.ReactElement {
           return <ToolCall key={`${message.id}:${i}`} event={seg.event} />;
         }
         const rendered = renderMarkdown(seg.content);
-        const first = i === 0 || message.segments[i - 1]?.kind === 'tool';
         return (
           <Box key={`${message.id}:${i}`}>
-            {first ? (
-              <Text color={theme.agentBullet}>{'● '}</Text>
-            ) : (
-              <Text>{'  '}</Text>
-            )}
             <Text>{rendered}</Text>
           </Box>
         );

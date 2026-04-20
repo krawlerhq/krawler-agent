@@ -23,8 +23,11 @@ import type { KrawlerClient } from '../../krawler.js';
 import { appendTurn, loadRecentTurns } from '../history.js';
 
 import { Banner } from './Banner.js';
+import { DirectivesCard } from './DirectivesCard.js';
 import { runTurn } from './driver.js';
 import type { DriverDeps } from './driver.js';
+import { HintLine } from './HintLine.js';
+import { WelcomeCard } from './WelcomeCard.js';
 import { InputBox } from './InputBox.js';
 import { Message } from './Message.js';
 import { SlashPopover } from './SlashPopover.js';
@@ -245,44 +248,44 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
     void userMsg;
   }
 
-  const who = ctx.displayName ? `@${ctx.handle} — ${ctx.displayName}` : `@${ctx.handle}`;
-  const settingsText = ctx.settingsUrl ?? "(couldn't bind; another krawler may own :8717)";
+  const who = ctx.displayName ? `@${ctx.handle} · ${ctx.displayName}` : `@${ctx.handle}`;
+  const settingsText = ctx.settingsUrl ?? '(settings server not bound)';
+  const welcomeTitle = ctx.displayName ? `welcome back, ${ctx.displayName}` : 'welcome back';
+  const homePath = ctx.historyPath.replace(process.env.HOME ?? '', '~');
 
   return (
     <Box flexDirection="column">
-      <Banner />
-      <Box paddingX={1}>
-        <Text color={theme.dim}>{`${who} · ${ctx.provider}/${ctx.model}`}</Text>
-      </Box>
-      <Box paddingX={1}>
-        <Text color={theme.dim}>{ctx.greeting}</Text>
-      </Box>
-      <Box paddingX={1} marginBottom={1}>
-        <Text color={theme.dim}>{`settings: ${settingsText}  ·  history: ${ctx.historyPath}  ·  /help for commands`}</Text>
-      </Box>
-      <Box paddingX={1}>
-        <Text color={theme.brand}>prime directives</Text>
-      </Box>
-      {ctx.directiveHeadings.map((h, i) => (
-        <Box key={`dir-${i}`} paddingX={1}>
-          <Text color={theme.dim}>{`  • ${h}`}</Text>
-        </Box>
-      ))}
-      <Box paddingX={1} marginBottom={1}>
-        <Text color={theme.dim}>{'  source: https://krawler.com/prime-directives.md'}</Text>
-      </Box>
+      <Banner version={ctx.version} subtitle={ctx.greeting} />
+
+      <WelcomeCard
+        title={welcomeTitle}
+        rows={[
+          { label: 'identity', value: who, color: theme.brand },
+          { label: 'model', value: `${ctx.provider}/${ctx.model}`, color: theme.accent },
+          { label: 'profile', value: ctx.profile },
+          { label: 'settings', value: settingsText },
+          { label: 'history', value: homePath },
+          { label: 'tips', value: 'type /help for commands · plain english for actions' },
+        ]}
+      />
+
+      <DirectivesCard
+        headings={ctx.directiveHeadings}
+        source="https://krawler.com/prime-directives.md"
+      />
+
       {messages.map((m) => (
-        <Box key={m.id} paddingX={1}>
+        <Box key={m.id} paddingX={2}>
           <Message message={m} />
         </Box>
       ))}
       {inflight ? (
-        <Box paddingX={1}>
+        <Box paddingX={2}>
           <Message message={inflight} />
         </Box>
       ) : null}
       {slashMatches.length > 0 ? (
-        <Box paddingX={1}>
+        <Box paddingX={2}>
           <SlashPopover items={slashMatches} selected={slashSelected} />
         </Box>
       ) : null}
@@ -296,14 +299,12 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
           }}
         />
       </Box>
+      <HintLine mode={mode} thinkingVerb={thinkingVerb} />
       <StatusLine
         profile={ctx.profile}
         provider={ctx.provider}
         model={ctx.model}
         handle={ctx.handle}
-        settingsUrl={ctx.settingsUrl}
-        mode={mode}
-        thinkingVerb={thinkingVerb}
       />
     </Box>
   );

@@ -392,6 +392,11 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     greeting: stripAnsi(greetingLine(me.displayName)),
   };
 
+  // Clear the terminal so the banner + welcome card land at the top
+  // of a blank viewport instead of dangling under the shell prompt
+  // and npm output. `2J` wipes the screen, `H` homes the cursor.
+  process.stdout.write('\u001b[2J\u001b[H');
+
   const { waitUntilExit } = render(
     React.createElement(App, {
       ctx,

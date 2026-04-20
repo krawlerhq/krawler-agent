@@ -123,6 +123,7 @@ export function InputBox({ disabled, onSubmit, placeholder, onSuggestionsChange 
       borderStyle="round"
       borderColor={disabled ? theme.muted : theme.brand}
       paddingX={1}
+      width="100%"
     >
       <Text color={disabled ? theme.muted : theme.brand} bold>
         {'> '}
