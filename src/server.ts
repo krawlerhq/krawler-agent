@@ -5,13 +5,17 @@ import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { z } from 'zod';
 
-import { PROVIDERS, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { PROVIDERS, getInstalledSkillsDir, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
 import type { Provider } from './config.js';
 import { validateKrawlerKey, validateProviderCredential } from './credentials.js';
 import { DEFAULT_PROFILE, listProfiles, withProfile } from './profile-context.js';
 import { KrawlerClient } from './krawler.js';
 import { MODEL_SUGGESTIONS } from './model.js';
 import { startGateway } from './gateway.js';
+import { listInstalledSkills, rawUrlForSkill } from './skill-refs.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -173,6 +177,80 @@ export async function buildServer() {
     const config = loadConfig();
     saveConfig({ ...config, krawlerApiKey: '' });
     return { profile: profileOf(req), config: redactConfig(loadConfig()) };
+  }));
+
+  // List the installed skills cached under this profile's dir. Returns
+  // the full body of each so the settings page can show a read-only
+  // viewer + Copy-body button. Drives the manual PR-back flow: the
+  // reflection loop evolves bodies over time, the human inspects via
+  // this endpoint, copies the text, and opens a PR by hand upstream.
+  app.get('/api/installed-skills', async (req) => withProfile(profileOf(req), () => {
+    const stats = listInstalledSkills();
+    const skills = stats.map((s) => {
+      const bodyPath = join(getInstalledSkillsDir(), s.slug, 'SKILL.md');
+      let body = '';
+      try { body = readFileSync(bodyPath, 'utf8'); } catch { /* ignore */ }
+      return {
+        slug: s.slug,
+        origin: s.meta?.origin ?? null,
+        title: s.meta?.title ?? null,
+        path: s.meta?.path ?? null,
+        installedAt: s.meta?.installedAt ?? null,
+        lastSyncedAt: s.meta?.lastSyncedAt ?? null,
+        edited: s.edited,
+        bodyBytes: s.bodyBytes,
+        body,
+      };
+    });
+    return { profile: profileOf(req), skills };
+  }));
+
+  // Re-pull an installed skill's body from its upstream origin URL and
+  // overwrite the local copy. Refuses when the local copy has diverged
+  // from the install-time hash unless force=true is passed. Updates
+  // meta.json's lastSyncedAt + lastSyncHash on success. Same semantics
+  // as the `krawler skill sync` CLI command; this is just the
+  // settings-page surface.
+  app.post('/api/installed-skills/:slug/sync', async (req, reply) => withProfile(profileOf(req), async () => {
+    const { slug } = req.params as { slug: string };
+    const { force } = (req.body as { force?: boolean } | null) ?? {};
+    const dir = join(getInstalledSkillsDir(), slug);
+    const bodyPath = join(dir, 'SKILL.md');
+    const metaPath = join(dir, 'meta.json');
+    if (!existsSync(bodyPath) || !existsSync(metaPath)) {
+      reply.code(404);
+      return { error: `no installed skill with slug "${slug}"` };
+    }
+    let meta: {
+      origin: string; title?: string; path?: string;
+      installedAt: string; lastSyncedAt: string; lastSyncHash: string;
+    };
+    try {
+      meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+    } catch {
+      reply.code(500);
+      return { error: `meta.json for "${slug}" is unreadable` };
+    }
+    const body = readFileSync(bodyPath, 'utf8');
+    const { createHash } = await import('node:crypto');
+    const currentHash = createHash('sha256').update(body).digest('hex').slice(0, 16);
+    const diverged = currentHash !== meta.lastSyncHash;
+    if (diverged && !force) {
+      reply.code(409);
+      return { error: `local copy has diverged from install-time body; pass force=true to overwrite`, diverged: true };
+    }
+    const raw = rawUrlForSkill(meta.origin);
+    const res = await fetch(raw, { headers: { Accept: 'text/markdown,text/plain,*/*' } });
+    if (!res.ok) {
+      reply.code(502);
+      return { error: `upstream fetch failed: HTTP ${res.status}` };
+    }
+    const next = await res.text();
+    const nextHash = createHash('sha256').update(next).digest('hex').slice(0, 16);
+    writeFileSync(bodyPath, next, { mode: 0o600 });
+    const newMeta = { ...meta, lastSyncedAt: new Date().toISOString(), lastSyncHash: nextHash };
+    writeFileSync(metaPath, JSON.stringify(newMeta, null, 2) + '\n', { mode: 0o600 });
+    return { profile: profileOf(req), ok: true, changed: nextHash !== currentHash, overwroteLocalEdits: diverged };
   }));
 
   // Start the v1.0 gateway (channel-driven tool loop) when a channel has creds.
