@@ -37,16 +37,58 @@ import { getMemoryPath, renderMemoryForPrompt } from './memory.js';
 const DIM = '\u001b[2m';
 const RESET = '\u001b[0m';
 const BRAND = '\u001b[38;5;31m';
+const ITALIC = '\u001b[3m';
 
 function renderPrompt(): string {
-  // "you>" in dim brand color so the REPL visually separates user
-  // turns from agent stream. The trailing space is the readline
-  // separator.
+  // "you>" in brand blue so the REPL visually separates user turns
+  // from agent stream. The trailing space is the readline separator.
   return `${BRAND}you>${RESET} `;
 }
 
-function renderAgentPrefix(handle: string): string {
-  return `${BRAND}@${handle}>${RESET} `;
+// Agent reply prefix. Claude-Code-style solid bullet so the eye
+// catches the shift from tool-thoughts (dim "> verb…") to the
+// agent's actual voice. Brand blue keeps Krawler's identity.
+function renderAgentPrefix(_handle: string): string {
+  return `${BRAND}\u25CF${RESET} `;
+}
+
+// Sparkle-style thinking spinner shown while the model is working
+// before any text or tool call has surfaced. Frames cycle through
+// the asterisk/sparkle family so it reads as "something's happening"
+// without being a busy wheel. A verb is picked once per turn so the
+// human sees variety over a session without it feeling random every
+// frame.
+const SPINNER_FRAMES = ['\u273B', '\u2733', '\u2734', '\u2737', '\u2736'];
+const THINKING_VERBS = [
+  'Thinking', 'Reflecting', 'Considering', 'Pondering', 'Deliberating',
+  'Scheming', 'Improvising', 'Drafting', 'Composing', 'Brewing',
+  'Cogitating', 'Wondering', 'Mulling', 'Weighing', 'Contemplating',
+];
+
+interface Spinner {
+  stop: () => void;
+}
+
+function startSpinner(): Spinner {
+  const verb = THINKING_VERBS[Math.floor(Math.random() * THINKING_VERBS.length)] ?? 'Thinking';
+  let i = 0;
+  // Hide the cursor while the spinner runs; restore on stop. Without
+  // this the terminal cursor sits mid-line and distracts.
+  process.stdout.write('\u001b[?25l');
+  const draw = () => {
+    const frame = SPINNER_FRAMES[i % SPINNER_FRAMES.length];
+    process.stdout.write(`\r  ${BRAND}${frame}${RESET} ${DIM}${ITALIC}${verb}\u2026${RESET}`);
+    i++;
+  };
+  draw();
+  const id = setInterval(draw, 120);
+  return {
+    stop: () => {
+      clearInterval(id);
+      // Clear the whole line and restore the cursor.
+      process.stdout.write('\r\u001b[2K\u001b[?25h');
+    },
+  };
 }
 
 // Resolved at REPL startup and woven into the system prompt so the
@@ -500,17 +542,17 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     if (Date.now() - lastActivity < IDLE_THRESHOLD_MS) return;
     heartbeatInflight = true;
     rl.pause();
-    process.stdout.write(`\n  ${DIM}> starting heartbeat${RESET}\n`);
+    process.stdout.write(`\n  ${DIM}${ITALIC}> starting heartbeat${RESET}\n`);
     try {
       const { summary } = await runHeartbeat('scheduled', {
         onAction: (a) => {
           const marker = a.ok ? '\u2713' : '\u2717';
-          process.stdout.write(`  ${DIM}> ${a.summary} ${marker}${RESET}\n`);
+          process.stdout.write(`  ${DIM}${ITALIC}> ${a.summary} ${marker}${RESET}\n`);
         },
       });
-      process.stdout.write(`  ${DIM}> heartbeat: ${summary}${RESET}\n`);
+      process.stdout.write(`  ${DIM}${ITALIC}> heartbeat: ${summary}${RESET}\n`);
     } catch (e) {
-      process.stdout.write(`  ${DIM}> heartbeat error: ${(e as Error).message}${RESET}\n`);
+      process.stdout.write(`  ${DIM}${ITALIC}> heartbeat error: ${(e as Error).message}${RESET}\n`);
       appendActivityLog({
         ts: new Date().toISOString(),
         level: 'warn',
@@ -624,25 +666,37 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     const messages = toModelMessages(history.slice(0, -1), line); // -1 to avoid the turn we just appended
 
     // Model call. Pause readline while streaming so the agent's
-    // output doesn't fight the user's prompt.
+    // output doesn't fight the user's prompt. Start a sparkle-
+    // spinner immediately so the REPL shows "* Thinking…" while
+    // the model is working; stopped the moment any text or tool
+    // surfaces.
     rl.pause();
-    process.stdout.write(renderAgentPrefix(me.handle));
+    let spinner: Spinner | null = startSpinner();
+    const stopSpinnerIfRunning = () => {
+      if (spinner) {
+        spinner.stop();
+        spinner = null;
+      }
+    };
     let fullText = '';
-    let agentPrefixActive: boolean = true;
+    // agentPrefixActive means the ● prefix is currently on the
+    // current line and we can stream text directly into it. Starts
+    // false because the spinner is still on the line; the first
+    // text-delta promotes the state.
+    let agentPrefixActive = false;
     // Tool hooks: render a "  > thought..." line when the model
     // decides to call one, then append " ok" / " failed: X" when
-    // execute() resolves. onToolStart is the FIRST side effect when
-    // a tool fires, so if we're still in the middle of a text
-    // stream we first close that line with a newline so the thought
-    // lands cleanly on its own line.
+    // execute() resolves. First side effect when a tool fires also
+    // stops the spinner if it was still running.
     let toolLineOpen = false;
     const hooks = {
       onToolStart: (_name: string, thought: string) => {
-        if (!agentPrefixActive && !fullText.endsWith('\n')) {
+        stopSpinnerIfRunning();
+        if (agentPrefixActive && !fullText.endsWith('\n')) {
           process.stdout.write('\n');
         }
         agentPrefixActive = false;
-        process.stdout.write(`  ${DIM}> ${thought}${RESET}`);
+        process.stdout.write(`  ${DIM}${ITALIC}> ${thought}${RESET}`);
         toolLineOpen = true;
       },
       onToolEnd: (_name: string, outcome: string, ok: boolean) => {
@@ -677,17 +731,21 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
       });
       for await (const chunk of result.textStream) {
         if (!agentPrefixActive) {
-          // A tool call just finished; start a fresh agent line for
-          // the post-tool continuation.
+          // First text of the turn (or resumption after a tool call).
+          // Stop the thinking spinner if it's still running and open
+          // a fresh agent line with the ● bullet.
+          stopSpinnerIfRunning();
           process.stdout.write(renderAgentPrefix(me.handle));
           agentPrefixActive = true;
         }
         process.stdout.write(chunk);
         fullText += chunk;
       }
+      stopSpinnerIfRunning();
       if (toolLineOpen) process.stdout.write('\n');
       if (fullText && !fullText.endsWith('\n')) process.stdout.write('\n');
     } catch (e) {
+      stopSpinnerIfRunning();
       process.stdout.write(`\n  ${DIM}model error: ${(e as Error).message}${RESET}\n`);
       appendActivityLog({
         ts: new Date().toISOString(),
