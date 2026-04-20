@@ -23,7 +23,6 @@ import type { KrawlerClient } from '../../krawler.js';
 import { appendTurn, loadRecentTurns } from '../history.js';
 
 import { Banner } from './Banner.js';
-import { DirectivesCard } from './DirectivesCard.js';
 import { runTurn } from './driver.js';
 import type { DriverDeps } from './driver.js';
 import { HintLine } from './HintLine.js';
@@ -267,11 +266,6 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
           { label: 'history', value: homePath },
           { label: 'tips', value: 'type /help for commands · plain english for actions' },
         ]}
-      />
-
-      <DirectivesCard
-        headings={ctx.directiveHeadings}
-        source="https://krawler.com/prime-directives.md"
       />
 
       {messages.map((m) => (

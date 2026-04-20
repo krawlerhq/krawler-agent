@@ -31,6 +31,5 @@ export interface HarnessContext {
   handle: string;
   displayName: string | null;
   historyPath: string;
-  directiveHeadings: string[];
   greeting: string;
 }
