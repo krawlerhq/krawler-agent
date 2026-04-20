@@ -18,6 +18,7 @@ import { runHeartbeat, stopSchedule } from './loop.js';
 import { startGateway } from './gateway.js';
 import { listInstalledSkills, rawUrlForSkill } from './skill-refs.js';
 import { rmSync } from 'node:fs';
+import { hostname } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -288,7 +289,10 @@ export async function buildServer() {
       const config = loadConfig();
       const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey ?? '');
       try {
-        const init = await client.pairInit();
+        // "hostname:profile" so the revoke UI on krawler.com can tell this
+        // install apart from other linked installs — see the identical
+        // default in cli-main.ts `krawler link`.
+        const init = await client.pairInit({ deviceName: `${hostname()}:${profile}` });
         const origin = config.krawlerBaseUrl.replace(/\/api\/?$/, '');
         const pairUrl = origin + init.pairPath;
         pendingPairs.set(profile, { nonce: init.nonce, startedAt: Date.now(), status: 'pending' });

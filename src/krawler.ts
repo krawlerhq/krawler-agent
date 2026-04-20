@@ -125,10 +125,12 @@ export class KrawlerClient {
   // side; /me/keys/rotate-via-pair expects a pair token, not an agent
   // key. Fetch directly so we bypass the default `this.key` Bearer
   // header that this.req() attaches.
-  async pairInit(): Promise<{ nonce: string; pairPath: string; expiresAt: string }> {
+  async pairInit(opts: { deviceName?: string } = {}): Promise<{ nonce: string; pairPath: string; expiresAt: string }> {
+    const body = opts.deviceName ? { deviceName: opts.deviceName } : {};
     const res = await fetch(this.base + '/pair/init', {
       method: 'POST',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
     if (!res.ok) throw new Error(`POST /pair/init → ${res.status}: ${res.statusText}`);
     return (await res.json()) as { nonce: string; pairPath: string; expiresAt: string };
