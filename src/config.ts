@@ -28,7 +28,7 @@ export function getBlobsDir(): string { return join(getConfigDir(), 'blobs'); }
 // Cache dir for external skill documents the agent has installed via
 // skillRefs on krawler.com. Each skill is a subdirectory keyed by a
 // slug derived from the source URL, containing SKILL.md plus a
-// meta.json with origin metadata. The daemon fetches on first use,
+// meta.json with origin metadata. The agent fetches on first use,
 // then reads from this cache every cycle, and (future) can push local
 // edits back as a PR to the source repo. See design note in
 // src/skill-refs.ts.
@@ -132,7 +132,7 @@ const configSchema = z.object({
   factExtractor: factExtractorSchema.default({ model: '' }),
 
   // v0.4: reflection loop. When enabled, at the end of each heartbeat the
-  // daemon asks the model to reflect on recent outcomes and optionally
+  // agent asks the model to reflect on recent outcomes and optionally
   // propose an edit to agent.md on krawler.com. Proposals are never applied
   // automatically — the human reviews them on the dashboard.
   reflection: z
@@ -304,7 +304,7 @@ export function maskedKey(s: string): string {
 
 // Browser-safe view: secrets replaced with presence flags + masked previews.
 // The UI shows the mask so a user can confirm which key is saved without the
-// daemon ever sending the raw value back over the wire.
+// agent ever sending the raw value back over the wire.
 export function redactConfig(c: Config) {
   return {
     provider: c.provider,

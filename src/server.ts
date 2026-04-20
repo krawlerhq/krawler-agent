@@ -11,11 +11,13 @@ import { join } from 'node:path';
 import { PROVIDERS, getInstalledSkillsDir, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
 import type { Provider } from './config.js';
 import { validateKrawlerKey, validateProviderCredential } from './credentials.js';
-import { DEFAULT_PROFILE, listProfiles, withProfile } from './profile-context.js';
+import { DEFAULT_PROFILE, PROFILE_ROOT, listProfiles, profileDir, withProfile } from './profile-context.js';
 import { KrawlerClient } from './krawler.js';
 import { MODEL_SUGGESTIONS } from './model.js';
+import { runHeartbeat, stopSchedule } from './loop.js';
 import { startGateway } from './gateway.js';
 import { listInstalledSkills, rawUrlForSkill } from './skill-refs.js';
+import { rmSync } from 'node:fs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -85,20 +87,45 @@ export async function buildServer() {
       return withProfile(name, async () => {
         const config = loadConfig();
         const hasKey = Boolean(config.krawlerApiKey);
+        const creds = config.provider === 'ollama'
+          ? Boolean(config.ollamaBaseUrl)
+          : Boolean(
+              config.provider === 'anthropic' ? config.anthropicApiKey :
+              config.provider === 'openai' ? config.openaiApiKey :
+              config.provider === 'google' ? config.googleApiKey :
+              config.provider === 'openrouter' ? config.openrouterApiKey :
+              '',
+            );
+        const base = {
+          name,
+          provider: config.provider,
+          model: config.model,
+          cadenceMinutes: config.cadenceMinutes,
+          dryRun: config.dryRun,
+          lastHeartbeat: config.lastHeartbeat ?? null,
+          hasModelCreds: creds,
+        };
         if (!hasKey) {
-          return { name, hasKey: false, handle: null, displayName: null, placeholder: false };
+          return { ...base, hasKey: false, handle: null, displayName: null, avatarStyle: null, placeholder: false, meError: null };
         }
         try {
           const { agent } = await new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey).me();
           return {
-            name,
+            ...base,
             hasKey: true,
             handle: agent.handle,
             displayName: agent.displayName,
+            avatarStyle: agent.avatarStyle ?? null,
             placeholder: /^agent-[0-9a-f]{8}$/.test(agent.handle),
+            meError: null,
           };
-        } catch {
-          return { name, hasKey: true, handle: null, displayName: null, placeholder: false };
+        } catch (e) {
+          // Surface the raw error so the dashboard pill can say what
+          // actually happened ("key rejected (HTTP 401)", "DNS lookup
+          // failed", etc.) instead of guessing "krawler.com unreachable"
+          // for every non-2xx /me response. A wrong key is far more
+          // common than an outage.
+          return { ...base, hasKey: true, handle: null, displayName: null, avatarStyle: null, placeholder: false, meError: (e as Error).message };
         }
       });
     }));
@@ -151,9 +178,11 @@ export async function buildServer() {
       return { error: parsed.error.issues[0]?.message ?? 'invalid body' };
     }
     const patch: Record<string, unknown> = { ...parsed.data };
-    for (const k of ['anthropicApiKey', 'openaiApiKey', 'googleApiKey', 'openrouterApiKey', 'krawlerApiKey']) {
-      if (patch[k] === '') delete patch[k];
-    }
+    // Empty-string for a secret field means "clear it". Older clients
+    // sometimes sent empty strings for untouched inputs and the server
+    // defensively stripped them; the current dashboard only PATCHes fields
+    // the user explicitly edited, so the strip is no longer needed and
+    // would block the "Remove" button in the shared-keys pane.
 
     // Validate credentials the moment they land rather than letting a
     // typo sit in config.json until the next heartbeat silently fails.
@@ -233,6 +262,59 @@ export async function buildServer() {
     saveConfig({ ...config, krawlerApiKey: '' });
     return { profile: profileOf(req), config: redactConfig(loadConfig()) };
   }));
+
+  // Fire one heartbeat for this profile now and return the summary. The
+  // scheduler is untouched (next cycle still fires on its own timer);
+  // this is the "Heartbeat now" button in the agents table.
+  app.post('/api/heartbeat', async (req, reply) => {
+    const profile = profileOf(req);
+    try {
+      const result = await withProfile(profile, () => runHeartbeat('manual'));
+      return { profile, ok: true, summary: result.summary };
+    } catch (e) {
+      reply.code(500);
+      return { profile, ok: false, error: (e as Error).message };
+    }
+  });
+
+  // Delete a profile directory, including its config.json, activity log,
+  // chat history, installed skills, and playbooks. The Krawler agent on
+  // krawler.com is untouched; the human can still spawn a new local
+  // profile and paste the same key if they want to reconnect.
+  //
+  // The default profile is undeletable — it's the fallback every other
+  // part of the agent runtime falls back to, and wiping ~/.config/krawler-agent/
+  // would also take out shared-keys.json.
+  app.delete('/api/profiles/:name', async (req, reply) => {
+    const { name } = req.params as { name: string };
+    if (!name || !/^[a-z0-9][a-z0-9._-]*$/i.test(name)) {
+      reply.code(400);
+      return { error: 'invalid profile name' };
+    }
+    if (name === DEFAULT_PROFILE) {
+      reply.code(400);
+      return { error: 'the default profile cannot be deleted' };
+    }
+    if (!listProfiles().includes(name)) {
+      reply.code(404);
+      return { error: `no profile named "${name}"` };
+    }
+    try { stopSchedule(name); } catch { /* ignore */ }
+    const dir = profileDir(name);
+    if (!dir.startsWith(PROFILE_ROOT + '/profiles/')) {
+      // Belt-and-braces: never let a malformed name traverse outside the
+      // profiles tree. profileDir() already scopes it, but double-check.
+      reply.code(500);
+      return { error: 'refused to delete outside profiles tree' };
+    }
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch (e) {
+      reply.code(500);
+      return { error: `rm failed: ${(e as Error).message}` };
+    }
+    return { ok: true, name };
+  });
 
   // List the installed skills cached under this profile's dir. Returns
   // the full body of each so the settings page can show a read-only

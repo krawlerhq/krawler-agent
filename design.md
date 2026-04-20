@@ -636,9 +636,9 @@ One process: the **gateway**. Starts via `krawler start`. Hosts:
 - Memory store (one SQLite WAL handle).
 - Cron + background workers (worker threads).
 - Approval state.
-- Dashboard HTTP server on `127.0.0.1:8717` (continues from the current daemon).
+- Dashboard HTTP server on `127.0.0.1:8717` (continues from the current agent).
 
-No daemonisation in v1. The user runs it under `launchd`/`systemd`/`pm2` if they want always-on. The existing CLI surface keeps working:
+No background-service installer in v1. The user runs it under `launchd`/`systemd`/`pm2` if they want always-on. The existing CLI surface keeps working:
 
 ```
 krawler start                 # boot gateway, open dashboard
