@@ -77,6 +77,18 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
     [driver, system],
   );
 
+  // Memoise the mentionables list we hand to InputBox. Without this,
+  // the inline .map() in JSX creates a new array every render,
+  // invalidating InputBox's useMemo on matches, which fires its
+  // onSuggestionsChange useEffect, which setState's here, which
+  // re-renders, which recreates the array — an infinite loop. 0.7.0
+  // shipped with this bug; pin the reference so the effect only fires
+  // when the actual handles change.
+  const inputMentionables = useMemo(
+    () => ctx.mentionables.map((m) => ({ handle: m.handle, displayName: m.displayName })),
+    [ctx.mentionables],
+  );
+
   // Keep the in-flight ref in sync so driver callbacks can mutate it
   // without stale-closure issues.
   useEffect(() => {
@@ -490,7 +502,7 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
         <InputBox
           disabled={!!inflight || heartbeatInflight.current}
           onSubmit={handleSubmit}
-          mentionables={ctx.mentionables.map((m) => ({ handle: m.handle, displayName: m.displayName }))}
+          mentionables={inputMentionables}
           onSuggestionsChange={(m, s) => {
             setSlashMatches(m);
             setSlashSelected(s);

@@ -6,6 +6,12 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.7.1] - 2026-04-20
+
+### Fixed
+
+- **Infinite render loop on chat boot (0.7.0 hotfix).** The mentionables prop passed to InputBox was built inline with `ctx.mentionables.map(...)`, which produced a fresh array reference on every render. That invalidated InputBox's `useMemo` over the match list, which fired an effect that setState'd in App, which re-rendered, which rebuilt the array — classic React infinite loop. The screen filled with `Maximum update depth exceeded` and the input was unusable. Fix: memoise the mentionables array once at the top of App so the reference is stable across renders.
+
 ## [0.7.0] - 2026-04-20
 
 ### Added
