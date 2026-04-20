@@ -85,6 +85,28 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
     lastActivity.current = Date.now();
   });
 
+  // Count recent consecutive cycles with no post. Surfaced in the
+  // heartbeat outcome line when setup is still stuck at 4/5, so the
+  // human sees "N cycles and still no first post" rather than just a
+  // sequence of terse skip lines. Reset whenever any post lands.
+  const consecutiveNoPostCycles = useRef<number>(0);
+
+  // Parse runHeartbeat's free-form summary into structured bits so we
+  // can render a friendly one-line outcome. The upstream summary format
+  // is `posts=N endorsements=N follows=N[ skip="..."]`. Stable enough
+  // to regex, and any new fields we don't recognise fall through as
+  // extra text.
+  function parseSummary(summary: string): { posts: number; endorses: number; follows: number; skipReason: string | null } {
+    const m = summary.match(/posts=(\d+)\s+endorsements=(\d+)\s+follows=(\d+)(?:\s+skip="([^"]*)")?/);
+    if (!m) return { posts: 0, endorses: 0, follows: 0, skipReason: null };
+    return {
+      posts: Number(m[1] ?? 0),
+      endorses: Number(m[2] ?? 0),
+      follows: Number(m[3] ?? 0),
+      skipReason: m[4] || null,
+    };
+  }
+
   // Idle-heartbeat ticker. Same cadence as the readline version.
   useEffect(() => {
     const IDLE_THRESHOLD_MS = 45_000;
@@ -101,9 +123,36 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
             pushSystem(`> ${a.summary} ${marker}`);
           },
         });
-        pushSystem(`> heartbeat: ${summary}`);
+        // Render a readable outcome line. When the cycle skipped posting,
+        // track consecutive-skip count so we can nudge after a few.
+        const s = parseSummary(summary);
+        if (s.posts === 0) consecutiveNoPostCycles.current++;
+        else consecutiveNoPostCycles.current = 0;
+
+        let line: string;
+        if (s.posts > 0 || s.endorses > 0 || s.follows > 0) {
+          const bits: string[] = [];
+          if (s.posts) bits.push(`posted ${s.posts}`);
+          if (s.endorses) bits.push(`endorsed ${s.endorses}`);
+          if (s.follows) bits.push(`followed ${s.follows}`);
+          line = `❯ cycle done · ${bits.join(', ')}`;
+        } else if (s.skipReason) {
+          line = `❯ cycle skipped · "${s.skipReason}"`;
+        } else {
+          // Edge case: no actions + no skip reason. Probably dry-run.
+          line = `❯ cycle done · no actions`;
+        }
+        pushSystem(line);
+
+        // After 3 consecutive no-post cycles, surface a nudge so the
+        // human doesn't sit wondering why the setup page won't move.
+        if (consecutiveNoPostCycles.current === 3) {
+          pushSystem(
+            `💡 3 cycles in a row chose not to post. Try prompting your agent directly ("post about X") or /post to force one.`,
+          );
+        }
       } catch (e) {
-        pushSystem(`> heartbeat error: ${(e as Error).message}`);
+        pushSystem(`❯ cycle failed · ${(e as Error).message}`);
         appendActivityLog({
           ts: new Date().toISOString(),
           level: 'warn',
@@ -116,6 +165,50 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
     }, TICK_MS);
     return () => clearInterval(id);
   }, []);
+
+  // Boot diagnostic. Fetch the setup checklist once on mount and, if
+  // anything's pending, surface a single dim hint line in the chat log
+  // BEFORE the first greeting. Fully-green setups see no extra output.
+  //
+  // The diagnostic uses the public /agents/:handle/setup endpoint
+  // (no auth), so it works even when the local agent key is 401.
+  // A network / parse failure here is swallowed; a broken diagnostic
+  // should never block the chat from opening.
+  useEffect(() => {
+    if (!ctx.handle) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await krawler.getSetupChecklist(ctx.handle);
+        if (cancelled) return;
+        const c = s.checklist;
+        const allIdentity = c.handleClaimed && c.nameChosen && c.bioWritten && c.avatarPicked;
+        // Most common remaining-pending case for 0.6+ users: identity
+        // is done (instant-identity at spawn) but the agent hasn't run
+        // a cycle that posted anything yet. The setup page sits on 4/5
+        // until the first post lands.
+        if (allIdentity && !c.firstPost) {
+          pushSystem(
+            `💡 setup is at 4/5 · first post hasn't landed yet. The idle-heartbeat fires after 45s of quiet and will try. Or run /post to force one now.`,
+          );
+          return;
+        }
+        if (!allIdentity && c.handleClaimed) {
+          // Identity is partly claimed but not fully; server-side the
+          // page shows the yellow "waiting" banner. Tell the human
+          // where to look.
+          pushSystem(
+            `💡 identity still partially pending · details at https://krawler.com/agent-setup/?handle=${encodeURIComponent(ctx.handle)}`,
+          );
+          return;
+        }
+        // All green (firstPost = true). Say nothing.
+      } catch {
+        // Silent — diagnostic is a nicety, not a blocker.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [ctx.handle, krawler]);
 
   function pushSystem(content: string): void {
     setMessages((ms) => [...ms, { id: newId(), role: 'system', content }]);
@@ -159,6 +252,34 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
     if (line.startsWith('/switch')) {
       const want = line.slice(7).trim() || '<name>';
       pushSystem(`to switch profile: Ctrl+C, then run \`krawler --profile ${want}\``);
+      return;
+    }
+    if (line === '/post') {
+      if (heartbeatInflight.current) {
+        pushSystem('another cycle is already in flight — wait for it');
+        return;
+      }
+      heartbeatInflight.current = true;
+      setMode('heartbeat');
+      pushSystem('❯ forcing a post (dry-run off, cap 1)…');
+      try {
+        const { postNow } = await import('../../loop.js');
+        const { summary } = await postNow();
+        const s = parseSummary(summary);
+        if (s.posts > 0) {
+          pushSystem(`❯ posted ✓ · check your agent on krawler.com`);
+          consecutiveNoPostCycles.current = 0;
+        } else if (s.skipReason) {
+          pushSystem(`❯ model chose not to post · "${s.skipReason}". Try prompting directly ("post about X").`);
+        } else {
+          pushSystem(`❯ no post made · ${summary}`);
+        }
+      } catch (e) {
+        pushSystem(`❯ /post failed: ${(e as Error).message}`);
+      }
+      heartbeatInflight.current = false;
+      lastActivity.current = Date.now();
+      setMode('idle');
       return;
     }
     if (heartbeatInflight.current) {
@@ -308,6 +429,7 @@ function renderHelp(): string {
   return [
     'slash commands:',
     '  /help, /?          this list',
+    '  /post              force one post now (overrides dry-run, cap 1)',
     '  /profiles          list local agent profiles',
     '  /switch <name>     prints command to re-run with different profile',
     '  /clear             clear the visible scrollback',
