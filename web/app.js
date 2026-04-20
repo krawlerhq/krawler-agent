@@ -427,6 +427,7 @@ async function switchProfile(name) {
   editMode.clear();
   await fetchConfig({ hydrateRuntime: true });
   await fetchIdentity();
+  await fetchInstalledSkills();
 }
 
 async function createProfile(rawName) {
@@ -452,6 +453,118 @@ async function createProfile(rawName) {
   await fetchConfig({ hydrateRuntime: true });
   await fetchProfiles();
   await fetchIdentity();
+  await fetchInstalledSkills();
+}
+
+// ───────────────────────── Installed skills ─────────────────────────
+//
+// Read-only viewer for the github-sourced SKILL.md docs this agent has
+// installed. The reflection loop keeps evolving the local body over
+// time; this panel is where the human inspects + copies. PR-back to
+// upstream is deliberately manual for now (no GitHub auth in the
+// daemon; sd's explicit call on 2026-04-19).
+
+async function fetchInstalledSkills() {
+  const mount = $('installed-skills');
+  if (!mount) return;
+  try {
+    const r = await fetch(withProfileQS('/api/installed-skills'));
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    renderInstalledSkills(j.skills || []);
+  } catch (e) {
+    mount.innerHTML = `<div class="muted err">Failed to load installed skills: ${escapeHtml(e.message || String(e))}</div>`;
+  }
+}
+
+function relTimeShort(iso) {
+  if (!iso) return '?';
+  const d = Math.max(0, Date.now() - new Date(iso).getTime());
+  const m = Math.floor(d / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function renderInstalledSkills(skills) {
+  const mount = $('installed-skills');
+  if (!mount) return;
+  if (!skills.length) {
+    mount.innerHTML = `<div class="muted">(no skills installed on this profile yet). Install one from <a href="https://krawler.com/agents/" target="_blank">krawler.com/agents</a>; the body will appear here on the next heartbeat.</div>`;
+    return;
+  }
+  const rows = skills.map((s) => {
+    const title = s.title || s.slug;
+    const edited = s.edited
+      ? `<span style="display:inline-block;padding:1px 8px;border-radius:9999px;font-size:0.72rem;font-weight:700;background:#fff4d4;color:var(--warn);border:1px solid #e8c166;">edited</span>`
+      : `<span style="display:inline-block;padding:1px 8px;border-radius:9999px;font-size:0.72rem;font-weight:600;background:var(--ok-bg);color:var(--ok);border:1px solid #a7e5b4;">clean</span>`;
+    const originHtml = s.origin
+      ? `<a href="${escapeAttr(s.origin)}" target="_blank" rel="noopener noreferrer">${escapeHtml(s.origin)}</a>`
+      : '<span class="muted">(origin unknown)</span>';
+    const syncTime = s.lastSyncedAt ? `last synced ${relTimeShort(s.lastSyncedAt)}` : 'never synced';
+    return `
+      <details style="border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;margin-bottom:8px;background:var(--surface);">
+        <summary style="cursor:pointer;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <strong style="font-size:0.95rem;">${escapeHtml(title)}</strong>
+          <code style="font-size:0.75rem;background:var(--surface-2);padding:1px 6px;border-radius:4px;">${escapeHtml(s.slug)}</code>
+          ${edited}
+          <span class="muted" style="font-size:0.78rem;">${s.bodyBytes}B \u00b7 ${escapeHtml(syncTime)}</span>
+        </summary>
+        <div style="margin-top:10px;">
+          <div class="hint" style="margin-bottom:6px;">Origin: ${originHtml}</div>
+          <textarea readonly data-skill-body="${escapeAttr(s.slug)}" style="width:100%;min-height:220px;padding:10px 12px;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);border-radius:6px;font-family:'SF Mono',Menlo,Monaco,monospace;font-size:0.82rem;line-height:1.5;">${escapeHtml(s.body || '')}</textarea>
+          <div class="row" style="margin-top:8px;gap:6px;flex-wrap:wrap;">
+            <button type="button" class="secondary" data-skill-copy="${escapeAttr(s.slug)}">Copy body</button>
+            <a class="secondary" href="${escapeAttr(s.origin || '#')}" target="_blank" rel="noopener noreferrer" style="padding:8px 14px;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border);border-radius:9999px;font-weight:600;text-decoration:none;font-size:0.9rem;">Open origin</a>
+            <button type="button" class="secondary" data-skill-sync="${escapeAttr(s.slug)}" title="${s.edited ? 'Local copy has diverged; Re-sync will offer a force overwrite if you confirm.' : 'Re-pull from upstream and replace the local copy.'}">Re-sync</button>
+            <span class="muted" data-skill-status="${escapeAttr(s.slug)}"></span>
+          </div>
+        </div>
+      </details>
+    `;
+  });
+  mount.innerHTML = rows.join('');
+}
+
+async function copySkillBody(slug) {
+  const ta = document.querySelector(`textarea[data-skill-body="${CSS.escape(slug)}"]`);
+  const status = document.querySelector(`[data-skill-status="${CSS.escape(slug)}"]`);
+  if (!ta) return;
+  try {
+    await navigator.clipboard.writeText(ta.value);
+    if (status) { status.textContent = 'copied \u2713'; status.className = 'muted ok'; setTimeout(() => { status.textContent = ''; status.className = 'muted'; }, 1800); }
+  } catch (e) {
+    ta.select();
+    try { document.execCommand('copy'); } catch { /* ignore */ }
+    if (status) { status.textContent = 'copied \u2713'; status.className = 'muted ok'; setTimeout(() => { status.textContent = ''; status.className = 'muted'; }, 1800); }
+  }
+}
+
+async function syncSkill(slug) {
+  const status = document.querySelector(`[data-skill-status="${CSS.escape(slug)}"]`);
+  const setStatusLine = (txt, cls) => { if (status) { status.textContent = txt; status.className = `muted ${cls || ''}`.trim(); } };
+  setStatusLine('syncing\u2026');
+  try {
+    let r = await fetch(withProfileQS(`/api/installed-skills/${encodeURIComponent(slug)}/sync`), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+    });
+    if (r.status === 409) {
+      const ok = confirm(`Local copy of "${slug}" has diverged from the install-time body. Re-syncing will overwrite your local edits. Continue?`);
+      if (!ok) { setStatusLine('cancelled', 'warn'); return; }
+      r = await fetch(withProfileQS(`/api/installed-skills/${encodeURIComponent(slug)}/sync`), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }),
+      });
+    }
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? `HTTP ${r.status}`);
+    const j = await r.json();
+    const msg = j.overwroteLocalEdits ? 'synced (local edits overwritten)' : j.changed ? 'synced (body changed)' : 'synced (no changes)';
+    setStatusLine(msg, 'ok');
+    await fetchInstalledSkills();
+  } catch (e) {
+    setStatusLine(`failed: ${e.message}`, 'err');
+  }
 }
 
 // ───────────────────────── Wiring ─────────────────────────
@@ -496,8 +609,21 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Escape') { e.preventDefault(); resetNewProfileUI(); }
   });
 
-  fetchProfiles().then(() => fetchConfig({ hydrateRuntime: true })).then(fetchIdentity);
+  // Delegated click handler for the installed-skills panel.
+  document.addEventListener('click', (e) => {
+    const copyBtn = e.target.closest('[data-skill-copy]');
+    if (copyBtn) { void copySkillBody(copyBtn.getAttribute('data-skill-copy')); return; }
+    const syncBtn = e.target.closest('[data-skill-sync]');
+    if (syncBtn) { void syncSkill(syncBtn.getAttribute('data-skill-sync')); return; }
+  });
+
+  fetchProfiles().then(() => fetchConfig({ hydrateRuntime: true })).then(fetchIdentity).then(fetchInstalledSkills);
 
   setInterval(() => { fetchConfig().catch(() => {}); }, 15000);
   setInterval(fetchIdentity, 30000);
+  // Installed-skills panel is deliberately NOT on an interval poll: a
+  // bare innerHTML rebuild would collapse whichever <details> the user
+  // was reading. The panel refreshes on page load, after a sync, and
+  // on manual reload; the reflection loop's edit cadence is minutes at
+  // fastest so this is plenty current without clobbering mid-read.
 });

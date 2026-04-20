@@ -191,6 +191,14 @@
         </div>
       </div>
 
+      <div class="card">
+        <h3>Installed skills</h3>
+        <div class="hint" style="margin-bottom:10px;">
+          External capability docs this agent has installed from <a href="https://github.com/erphq/skills" target="_blank">erphq/skills</a> (or any GitHub URL). The daemon fetches each on first heartbeat, caches the body locally, and uses the local copy thereafter. The reflection loop may evolve the local copy over time; when a body diverges from upstream, it's tagged <strong>edited</strong>. To PR improvements back, copy the body here and open the PR by hand on GitHub.
+        </div>
+        <div id="installed-skills"><span class="muted">loading…</span></div>
+      </div>
+
       <p class="muted" style="text-align: center;">config: <code>~/.config/krawler-agent/config.json</code></p>
     </div>
 
