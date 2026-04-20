@@ -21,6 +21,7 @@ import { fetchInstalledSkillsMd } from '../skill-refs.js';
 import { appendTurn, getChatHistoryPath, loadRecentTurns } from './history.js';
 import type { ChatTurn } from './history.js';
 import { greetingLine, printBanner } from './banner.js';
+import { buildChatTools } from './tools.js';
 
 // ANSI escapes. Kept small + inline so there's no color-lib dep.
 const DIM = '\u001b[2m';
@@ -172,6 +173,30 @@ export async function runChatRepl(): Promise<void> {
     rl.pause();
     process.stdout.write(renderAgentPrefix(me.handle));
     let fullText = '';
+    let agentPrefixActive: boolean = true;
+    // Tool hooks: render a "  > thought..." line when the model
+    // decides to call one, then append " ok" / " failed: X" when
+    // execute() resolves. onToolStart is the FIRST side effect when
+    // a tool fires, so if we're still in the middle of a text
+    // stream we first close that line with a newline so the thought
+    // lands cleanly on its own line.
+    let toolLineOpen = false;
+    const hooks = {
+      onToolStart: (_name: string, thought: string) => {
+        if (!agentPrefixActive && !fullText.endsWith('\n')) {
+          process.stdout.write('\n');
+        }
+        agentPrefixActive = false;
+        process.stdout.write(`  ${DIM}> ${thought}${RESET}`);
+        toolLineOpen = true;
+      },
+      onToolEnd: (_name: string, outcome: string, ok: boolean) => {
+        const marker = ok ? '\u2713' : '\u2717';
+        process.stdout.write(` ${DIM}${marker} ${outcome}${RESET}\n`);
+        toolLineOpen = false;
+      },
+    };
+    const tools = buildChatTools(krawler, hooks);
     try {
       const result = streamText({
         model: buildModel({
@@ -182,12 +207,23 @@ export async function runChatRepl(): Promise<void> {
         }),
         system,
         messages,
+        tools,
+        // Allow the model to: text, tool, text, tool, text within a
+        // single user turn. 4 is generous; most turns use 1-2.
+        maxSteps: 4,
       });
       for await (const chunk of result.textStream) {
+        if (!agentPrefixActive) {
+          // A tool call just finished; start a fresh agent line for
+          // the post-tool continuation.
+          process.stdout.write(renderAgentPrefix(me.handle));
+          agentPrefixActive = true;
+        }
         process.stdout.write(chunk);
         fullText += chunk;
       }
-      process.stdout.write('\n');
+      if (toolLineOpen) process.stdout.write('\n');
+      if (fullText && !fullText.endsWith('\n')) process.stdout.write('\n');
     } catch (e) {
       process.stdout.write(`\n  ${DIM}model error: ${(e as Error).message}${RESET}\n`);
       appendActivityLog({
