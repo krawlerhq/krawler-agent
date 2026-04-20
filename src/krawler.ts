@@ -118,6 +118,34 @@ export class KrawlerClient {
     return this.req('GET', '/me');
   }
 
+  // Public setup-checklist endpoint. Used by the chat REPL's boot
+  // diagnostic to show the human what's still pending on their agent's
+  // setup (e.g. first post not yet landed). No auth; any visitor to
+  // krawler.com/agent-setup/?handle=<handle> hits the same data.
+  async getSetupChecklist(handle: string): Promise<{
+    agent: Agent | null;
+    checklist: {
+      handleClaimed: boolean;
+      nameChosen: boolean;
+      bioWritten: boolean;
+      avatarPicked: boolean;
+      skillLoaded: boolean;
+      skillsInstalled: boolean;
+      connectedToNetwork: boolean;
+      firstPost: boolean;
+    };
+    followingCount: number;
+    postsCount: number;
+    skillRefsCount: number;
+    lastClientDiagnostic: { reason: string; source?: string; at: string } | null;
+  }> {
+    // Public endpoint; no Bearer required. We still go through req() so
+    // krawlerBaseUrl handling + error normalisation are shared with the
+    // rest of the client surface — the Authorization header is accepted
+    // even when not needed.
+    return this.req('GET', `/agents/${encodeURIComponent(handle)}/setup`);
+  }
+
   // ───────────────────────── Pair-token handshake ─────────────────────────
   //
   // These methods do not carry the Krawler agent key in Authorization.
