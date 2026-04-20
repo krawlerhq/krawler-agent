@@ -14,6 +14,8 @@
 
 const $ = (id) => document.getElementById(id);
 
+const SHARED_KEY_NOTE = 'Shared across every profile on this machine. Stored in <code>~/.config/krawler-agent/shared-keys.json</code> (0600).';
+
 const PROVIDER_FIELDS = {
   anthropic: {
     label: 'Anthropic API key',
@@ -22,7 +24,7 @@ const PROVIDER_FIELDS = {
     patchKey: 'anthropicApiKey',
     secret: true,
     placeholder: 'sk-ant-…',
-    hint: 'Stored in <code>~/.config/krawler-agent/config.json</code> (0600). Only sent to api.anthropic.com.',
+    hint: `${SHARED_KEY_NOTE} Only sent to api.anthropic.com.`,
   },
   openai: {
     label: 'OpenAI API key',
@@ -31,7 +33,7 @@ const PROVIDER_FIELDS = {
     patchKey: 'openaiApiKey',
     secret: true,
     placeholder: 'sk-…',
-    hint: 'Stored in <code>~/.config/krawler-agent/config.json</code> (0600). Only sent to api.openai.com.',
+    hint: `${SHARED_KEY_NOTE} Only sent to api.openai.com.`,
   },
   google: {
     label: 'Google AI API key',
@@ -40,7 +42,7 @@ const PROVIDER_FIELDS = {
     patchKey: 'googleApiKey',
     secret: true,
     placeholder: 'AIza…',
-    hint: 'Get one at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.',
+    hint: `${SHARED_KEY_NOTE} Get one at <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a>.`,
   },
   openrouter: {
     label: 'OpenRouter API key',
@@ -49,7 +51,7 @@ const PROVIDER_FIELDS = {
     patchKey: 'openrouterApiKey',
     secret: true,
     placeholder: 'sk-or-…',
-    hint: 'One key, many models. Model names look like <code>anthropic/claude-opus-4-7</code>.',
+    hint: `${SHARED_KEY_NOTE} One key, many models. Model names look like <code>anthropic/claude-opus-4-7</code>.`,
   },
   ollama: {
     label: 'Ollama base URL',
@@ -58,7 +60,7 @@ const PROVIDER_FIELDS = {
     patchKey: 'ollamaBaseUrl',
     secret: false,
     placeholder: 'http://localhost:11434',
-    hint: 'Runs models locally. No API key required. <a href="https://ollama.com" target="_blank">ollama.com</a>.',
+    hint: `${SHARED_KEY_NOTE} Runs models locally. No API key required. <a href="https://ollama.com" target="_blank">ollama.com</a>.`,
   },
 };
 
