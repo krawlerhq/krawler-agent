@@ -35,6 +35,7 @@ import { StatusLine } from './StatusLine.js';
 import type { StatusMode } from './StatusLine.js';
 import { theme } from './theme.js';
 import type { AssistantSegment, ChatMessage, HarnessContext, ToolEvent } from './types.js';
+import type { AgentRegistry } from '../agents-registry.js';
 
 const THINKING_VERBS = [
   'Thinking', 'Reflecting', 'Considering', 'Pondering', 'Deliberating',
@@ -55,9 +56,10 @@ interface Props {
   krawler: KrawlerClient;
   driver: Omit<DriverDeps, 'system'>;
   system: string;
+  registry: AgentRegistry;
 }
 
-export function App({ ctx, krawler, driver, system }: Props): React.ReactElement {
+export function App({ ctx, krawler, driver, system, registry }: Props): React.ReactElement {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inflight, setInflight] = useState<ChatMessage | null>(null);
@@ -287,24 +289,94 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
       return;
     }
 
-    const userMsg: ChatMessage = { id: newId(), role: 'user', content: line };
-    pushUser(line);
-    appendTurn({ role: 'user', content: line, ts: new Date().toISOString() });
+    // @-handle routing. One turn can be addressed to any of the
+    // mentionable agents (other profiles on this machine). The match
+    // is case-insensitive; the rest of the line becomes the user
+    // message, unprefixed. Unknown handles fail closed with a
+    // friendly list of the handles this human actually has.
+    let targetHandle: string | null = null;
+    let effectiveLine = line;
+    const atMatch = /^@(\S+)(?:\s+(.*))?$/.exec(line);
+    if (atMatch) {
+      const requested = (atMatch[1] ?? '').toLowerCase();
+      const body = (atMatch[2] ?? '').trim();
+      const match = ctx.mentionables.find((m) => m.handle.toLowerCase() === requested);
+      if (!match) {
+        const known = ctx.mentionables.map((m) => `@${m.handle}`).join(', ');
+        pushSystem(
+          known
+            ? `no agent @${atMatch[1]} — your agents here: ${known}`
+            : `no agent @${atMatch[1]} — you haven't spawned any other agents on this machine yet. mint one at https://krawler.com/agents/ then re-open chat.`,
+        );
+        return;
+      }
+      if (!body) {
+        pushSystem(`say something after @${match.handle}`);
+        return;
+      }
+      targetHandle = match.handle;
+      effectiveLine = body;
+    }
 
-    const history = loadRecentTurns();
-    const modelMessages = history
-      .slice(0, -1) // drop the turn we just appended
-      .map((t) => ({ role: t.role, content: t.content }));
-    modelMessages.push({ role: 'user', content: line });
+    const userMsg: ChatMessage = targetHandle
+      ? { id: newId(), role: 'user', content: effectiveLine, targetHandle }
+      : { id: newId(), role: 'user', content: effectiveLine };
+    // Show the user bubble with its original `@handle body` phrasing so
+    // the human sees what they typed. The model only sees `body` though.
+    const displayedUserLine = targetHandle ? `@${targetHandle} ${effectiveLine}` : effectiveLine;
+    pushUser(displayedUserLine);
+    // Primary-agent turns persist to the primary profile's chat.jsonl.
+    // @-routed turns are session-ephemeral in Phase 1: routed replies
+    // aren't in the primary's history (confuses the primary's context)
+    // and we haven't wired cross-profile appends yet. When the human
+    // reopens chat, sidebars are gone — that matches the "turn-scoped"
+    // contract the routing was designed around.
+    if (!targetHandle) {
+      appendTurn({ role: 'user', content: effectiveLine, ts: new Date().toISOString() });
+    }
+
+    // Build the model messages list. Primary agent: full history from
+    // chat.jsonl. Secondary agent: just this one user turn (sidebar is
+    // stateless in Phase 1).
+    const modelMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+    if (!targetHandle) {
+      const history = loadRecentTurns();
+      for (const t of history.slice(0, -1)) {
+        modelMessages.push({ role: t.role, content: t.content });
+      }
+    }
+    modelMessages.push({ role: 'user', content: effectiveLine });
+
+    // Pick the right driver + system prompt. Primary uses the ones
+    // already cached on mount. Secondaries build the system prompt
+    // lazily on first address so boot-time cost stays constant.
+    let turnDeps: DriverDeps = assistantDeps;
+    if (targetHandle) {
+      const entry = registry.byHandle[targetHandle];
+      if (!entry) {
+        pushSystem(`agent @${targetHandle} vanished — registry desync`);
+        return;
+      }
+      let sys: string;
+      try {
+        sys = await entry.buildSystem();
+      } catch (e) {
+        pushSystem(`could not build @${targetHandle} system prompt: ${(e as Error).message}`);
+        return;
+      }
+      turnDeps = { ...entry.driver, system: sys };
+    }
 
     const assistantId = newId();
-    const starter: ChatMessage = { id: assistantId, role: 'assistant', segments: [] };
+    const starter: ChatMessage = targetHandle
+      ? { id: assistantId, role: 'assistant', segments: [], sourceHandle: targetHandle }
+      : { id: assistantId, role: 'assistant', segments: [] };
     setInflight(starter);
     setThinkingVerb(pickVerb());
     setMode('thinking');
     chatInflight.current = true;
 
-    await runTurn(assistantDeps, modelMessages, {
+    await runTurn(turnDeps, modelMessages, {
       onText: (chunk) => {
         setInflight((cur) => {
           if (!cur || cur.role !== 'assistant') return cur;
@@ -355,7 +427,9 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
           setMessages((ms) => [...ms, finalMsg]);
         }
         setInflight(null);
-        if (fullText.trim().length > 0) {
+        // Skip persisting @-routed replies to the primary's chat.jsonl
+        // (see the matching skip on user turn above).
+        if (fullText.trim().length > 0 && !targetHandle) {
           appendTurn({ role: 'assistant', content: fullText, ts: new Date().toISOString() });
         }
         chatInflight.current = false;
@@ -386,6 +460,13 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
           { label: 'model', value: `${ctx.provider}/${ctx.model}`, color: theme.accent },
           { label: 'profile', value: ctx.profile },
           { label: 'history', value: homePath },
+          ...(ctx.mentionables.length > 0
+            ? [{
+                label: 'also here',
+                value: ctx.mentionables.map((m) => `@${m.handle}`).join(', ') + ' · type @ to address',
+                color: theme.dim,
+              }]
+            : []),
           { label: 'tips', value: 'type /help for commands · plain english for actions' },
         ]}
       />
@@ -409,6 +490,7 @@ export function App({ ctx, krawler, driver, system }: Props): React.ReactElement
         <InputBox
           disabled={!!inflight || heartbeatInflight.current}
           onSubmit={handleSubmit}
+          mentionables={ctx.mentionables.map((m) => ({ handle: m.handle, displayName: m.displayName }))}
           onSuggestionsChange={(m, s) => {
             setSlashMatches(m);
             setSlashSelected(s);
@@ -435,6 +517,11 @@ function renderHelp(): string {
     '  /switch <name>     prints command to re-run with different profile',
     '  /clear             clear the visible scrollback',
     '  /exit, /quit       leave',
+    '',
+    '@-tagging (route one turn to another agent you spawned):',
+    '  @<handle> <message>      route this turn only — next message without @',
+    '                           goes back to your primary agent',
+    '  type @ to see an autocomplete list of your agents',
     '',
     'things to ask in plain language:',
     '  "what\'s on my feed?"                agent reads recent feed',
