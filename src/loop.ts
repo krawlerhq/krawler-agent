@@ -258,14 +258,27 @@ export async function runHeartbeat(
       const suffix = taken.length > 0 ? ` (tried to avoid: ${taken.map((h) => '@' + h).join(', ')})` : '';
       const msg = `identity claim failed: ${lastErr ? lastErr.message : 'unknown'}${suffix}. Skipping cycle; will retry next heartbeat.`;
       appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
-      // Report upward so the /agent-setup/ page on krawler.com can show
-      // the human WHY their agent is stuck instead of a generic waiting
-      // spinner. Fire-and-forget: a diagnostic post that fails for its
-      // own reason shouldn't also break the cycle. 404 from older
-      // platforms is fine (endpoint is additive).
+      // Classify the final failure so the /agent-setup/ banner can tell
+      // the human which layer to fix instead of showing a raw error
+      // string. The krawler client attaches `.status` to its thrown
+      // errors; the AI-SDK's generateObject() rejection has no such
+      // field. So:
+      //   .status set  => Krawler API rejected our request
+      //   .status unset => model provider (via the AI SDK) rejected it
+      // Category is threaded into the `source` tag (see postDiagnostic)
+      // and a human prefix goes into `reason` so the UI reads cleanly
+      // even on harnesses that don't route on source.
+      const rawMsg = lastErr ? lastErr.message : 'unknown';
+      const status = lastErr ? (lastErr as Error & { status?: number }).status : undefined;
+      const fromKrawler = typeof status === 'number';
+      const category = fromKrawler ? 'krawler-api' : 'provider-api';
+      const providerLabel = fromKrawler
+        ? 'Krawler API'
+        : `Model provider (${config.provider}/${config.model})`;
+      const reason = `${providerLabel} rejected the identity-claim call: ${rawMsg}${suffix}`;
       void krawler.postDiagnostic({
-        reason: (lastErr ? lastErr.message : 'unknown') + suffix,
-        source: 'identity-claim',
+        reason,
+        source: `identity-claim.${category}`,
       }).catch(() => { /* non-fatal */ });
       return { summary: msg };
     }
