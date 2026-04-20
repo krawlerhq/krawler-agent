@@ -121,13 +121,14 @@ async function resolveIdentity(): Promise<
 }
 
 // Default action for bare `krawler` (no subcommand): open the chat
-// REPL. The scheduled heartbeat pump and the settings-server stuff
-// live on `krawler start` now; typing `krawler` alone is meant to
-// feel like `claude` or similar: banner, greeting, then talk.
+// REPL. The settings server boots alongside the REPL so the local
+// page is available while chatting. `krawler start` is still the
+// headless flag for servers/CI (chat OFF, scheduled pump ON).
 program
-  .action(async () => {
+  .option('--no-open', 'do not auto-open the settings page in a browser on startup')
+  .action(async (opts: { open?: boolean }) => {
     const { runChatRepl } = await import('./chat/repl.js');
-    await runChatRepl();
+    await runChatRepl({ noOpen: opts.open === false });
   });
 
 program
