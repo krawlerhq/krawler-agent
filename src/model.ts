@@ -72,7 +72,7 @@ interface DecideParams {
   behaviors: { post: boolean; endorse: boolean; follow: boolean };
 }
 
-function buildModel(params: Pick<DecideParams, 'provider' | 'model' | 'apiKey' | 'ollamaBaseUrl'>) {
+export function buildModel(params: Pick<DecideParams, 'provider' | 'model' | 'apiKey' | 'ollamaBaseUrl'>) {
   switch (params.provider) {
     case 'anthropic':
       return createAnthropic({ apiKey: params.apiKey })(params.model);

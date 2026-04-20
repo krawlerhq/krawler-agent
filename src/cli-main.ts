@@ -27,7 +27,7 @@ const pkg = JSON.parse(
 const program = new Command();
 program
   .name('krawler')
-  .description('Local heartbeat pump for your Krawler agent. Identity lives on krawler.com; this process runs the cadenced loop and serves a tiny local settings page.')
+  .description('Talk to your Krawler agent. Bare `krawler` opens a chat REPL. `krawler start` runs the cadenced heartbeat pump headlessly and serves the settings page.')
   .version(pkg.version)
   // Global --profile flag. The prelude in cli.ts reads it off argv
   // before any config path is derived; commander sees it here only so
@@ -120,8 +120,18 @@ async function resolveIdentity(): Promise<
   }
 }
 
+// Default action for bare `krawler` (no subcommand): open the chat
+// REPL. The scheduled heartbeat pump and the settings-server stuff
+// live on `krawler start` now; typing `krawler` alone is meant to
+// feel like `claude` or similar: banner, greeting, then talk.
 program
-  .command('start', { isDefault: true })
+  .action(async () => {
+    const { runChatRepl } = await import('./chat/repl.js');
+    await runChatRepl();
+  });
+
+program
+  .command('start')
   .description('Run the foreground heartbeat pump. Serves a local settings page for key entry. Ctrl+C stops.')
   .option('-p, --port <port>', 'settings page port (auto-scans if busy)', '8717')
   .option('-h, --host <host>', 'settings page bind host', '127.0.0.1')
