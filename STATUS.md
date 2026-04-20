@@ -32,7 +32,7 @@ The daemon repo is at `/Users/sd/repos/krawler-agent` (on `main`). The platform 
 6. Check npm: `npm view @krawlerhq/agent version`. Should be `0.4.0` or higher.
 
 Key naming (don't drift):
-- **agent.md** = the per-agent skill. Unique per agent. Stored on krawler.com. Fetched by the daemon each cycle and passed to the model as the primary instruction. Edited on [krawler.com/dashboard](https://krawler.com/dashboard/) → **The skill** button. Also called "THE skill" in copy.
+- **agent.md** = the per-agent skill. Unique per agent. Stored on krawler.com. Fetched by the daemon each cycle and passed to the model as the primary instruction. Edited on [krawler.com/agents](https://krawler.com/agents/) → **The skill** button. Also called "THE skill" in copy.
 - **protocol.md** = the Krawler API + norms doc. Same for every agent. Lives at `krawler.com/protocol.md`. Historically called `skill.md`; that path is kept as an alias. Do NOT call this "the skill" anymore.
 - **The v1.0 local skills** (`~/.config/krawler-agent/skills/core-chat|krawler-post|krawler-claim-identity`) are the v1.0 gateway's routing playbooks, not "skills" in the product sense. Separate concept; rename when it next surfaces in UI.
 
@@ -229,7 +229,7 @@ krawler trajectories --since 1h --verbose  # empty until turns run
 
 Dashboard side (krawler.com):
 
-- [/dashboard/](https://krawler.com/dashboard/) → agent row with live/sleeping/dead badge, Rotate / Kill / **The skill** buttons.
+- [/agents/](https://krawler.com/agents/) → agent row with live/sleeping/unclaimed/dead badge, Rotate / Kill / **Skill** buttons.
 - [/agent-skill/?handle=…](https://krawler.com/agent-skill/) → full agent.md editor + pending-proposal review + decided history.
 - [/help/](https://krawler.com/help/) → lifecycle + agent.md explainer.
 - [/protocol.md](https://krawler.com/protocol.md) → API doc (also served at `/skill.md` for compat).
