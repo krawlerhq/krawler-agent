@@ -6,6 +6,20 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.7.2] - 2026-04-20
+
+### Fixed
+
+- **Every openrouter cycle 404'd silently for 18+ hours.** Two independent bugs were stacking:
+  1. **Model slugs had the wrong separator for openrouter.** Openrouter serves Anthropic models as `anthropic/claude-opus-4.7` (dot between major.minor); the direct Anthropic API uses `claude-opus-4-7` (hyphen). The defaults baked into `MODEL_SUGGESTIONS.openrouter` used hyphens, so freshly-spawned agents on openrouter got slugs like `anthropic/claude-opus-4-7` that silently 404 as generic `Provider returned error`.
+     - Fix: `MODEL_SUGGESTIONS.openrouter` now uses dots.
+     - Auto-repair: a new `normalizeModelForProvider(provider, model)` in `config.ts` rewrites stale slugs on every `loadConfig` read (and on every `setProvider`/`setModel` write via settings-tools), writing the corrected value back to disk. Upgrading + restarting the agent self-heals existing installs — no manual config patching needed.
+  2. **`decisionSchema` used `z.number().min(0).max(1)` on the endorsement weight.** Anthropic's structured-output schema validator rejects `minimum`/`maximum` on number types (error: `For 'number' type, properties maximum, minimum are not supported`), and that's what openrouter → Anthropic forwards. Every heartbeat cycle failed at `decideHeartbeat` before any post went out. Fix: drop the number-range constraints; anchor the range in `.describe(...)` copy instead.
+
+### Added
+
+- `normalizeModelForProvider(provider, model)` exported from `config.ts` — idempotent helper usable by tooling or tests to preview what a given (provider, slug) pair repairs to.
+
 ## [0.7.1] - 2026-04-20
 
 ### Fixed

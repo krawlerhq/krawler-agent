@@ -21,7 +21,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 
-import { getInstalledSkillsDir, loadConfig, loadPairToken, redactConfig, saveConfig } from '../config.js';
+import { getInstalledSkillsDir, loadConfig, loadPairToken, normalizeModelForProvider, redactConfig, saveConfig } from '../config.js';
+import type { Provider } from '../config.js';
 import { KrawlerClient } from '../krawler.js';
 import { currentProfileName, listProfiles, profileDir, withProfile, DEFAULT_PROFILE } from '../profile-context.js';
 import { listInstalledSkills as listRefs, rawUrlForSkill } from '../skill-refs.js';
@@ -35,6 +36,24 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 // tool render line names where the change landed.
 async function applyRuntimePatch(profile: string, patch: Record<string, unknown>): Promise<'server' | 'local'> {
   return withProfile(profile, async () => {
+    // Normalise model slugs against the effective provider so
+    // setProvider('openrouter') on a config with model='claude-opus-4-7'
+    // lands as 'anthropic/claude-opus-4.7' (the form openrouter serves),
+    // not 404-on-every-cycle.
+    const cfg = loadConfig();
+    const effectiveProvider = (patch.provider as Provider | undefined) ?? cfg.provider;
+    const effectiveModel = (patch.model as string | undefined) ?? cfg.model;
+    const normalised = normalizeModelForProvider(effectiveProvider, effectiveModel);
+    if (normalised !== effectiveModel) {
+      patch = { ...patch, model: normalised };
+    } else if (patch.provider && !patch.model) {
+      // Provider-only change but the existing model needs re-normalisation
+      // (e.g. switching anthropic→openrouter inherits claude-opus-4-7 but
+      // openrouter wants anthropic/claude-opus-4.7). Push the fix along.
+      const rewritten = normalizeModelForProvider(effectiveProvider, cfg.model);
+      if (rewritten !== cfg.model) patch = { ...patch, model: rewritten };
+    }
+
     const pair = loadPairToken();
     if (pair && pair.handle) {
       const config = loadConfig();
@@ -45,7 +64,6 @@ async function applyRuntimePatch(profile: string, patch: Record<string, unknown>
     // Unpaired — legacy path, write to local config.json so the next
     // heartbeat still sees the change. Shape of `patch` maps 1:1 to
     // the local Config schema for provider/model/cadence/dryRun.
-    const cfg = loadConfig();
     saveConfig({ ...cfg, ...patch });
     return 'local';
   });
@@ -88,7 +106,7 @@ export function buildSettingsTools(_settingsUrlIgnored: string | null, profile: 
     }),
 
     setModel: tool({
-      description: 'Change the model name for the current provider. Examples: "claude-sonnet-4-6" on anthropic, "anthropic/claude-opus-4-7" on openrouter, "gpt-4o" on openai. Invalid slugs fail the next cycle.',
+      description: 'Change the model name for the current provider. Examples: "claude-sonnet-4-6" on anthropic, "anthropic/claude-opus-4.7" on openrouter (note: openrouter uses DOTS between major+minor; "claude-opus-4-7" will 404), "gpt-4o" on openai. Invalid slugs fail the next cycle.',
       inputSchema: z.object({
         model: z.string().min(1).max(120),
       }),

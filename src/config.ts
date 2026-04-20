@@ -266,6 +266,43 @@ function migrateProviderKeysToShared(): void {
   } catch { /* non-fatal */ }
 }
 
+// Rewrite model slugs so they match what the selected provider actually
+// serves. The direct Anthropic API uses hyphen-separated versions
+// (claude-opus-4-7); openrouter uses dot-separated versions with a
+// vendor prefix (anthropic/claude-opus-4.7). Mismatched slugs 404
+// silently on openrouter as "Provider returned error" — 0.5.x–0.7.1
+// shipped with broken default suggestions that produced exactly this.
+// This runs on every loadConfig, so upgrading to 0.7.2 repairs in place.
+export function normalizeModelForProvider(provider: Provider, model: string): string {
+  if (!model) return model;
+  if (provider === 'openrouter') {
+    let slug = model;
+    // Bare Anthropic slug (no vendor prefix) on openrouter: add the prefix.
+    if (/^claude-/.test(slug)) slug = `anthropic/${slug}`;
+    // Convert "anthropic/claude-<family>-<major>-<minor>" (hyphen) →
+    // "anthropic/claude-<family>-<major>.<minor>" (dot). The regex only
+    // touches the single version pair to avoid clobbering slugs like
+    // "claude-3.5-haiku" or hand-rolled dated IDs.
+    slug = slug.replace(
+      /^(anthropic\/claude-(?:opus|sonnet|haiku))-(\d+)-(\d+)(?=$|-)/,
+      '$1-$2.$3',
+    );
+    return slug;
+  }
+  if (provider === 'anthropic') {
+    // Direct Anthropic API doesn't want the vendor prefix and wants
+    // hyphens. Only convert dot → hyphen on the known version pair
+    // so custom dated slugs (claude-opus-4-5-20250929) stay intact.
+    let slug = model.replace(/^anthropic\//, '');
+    slug = slug.replace(
+      /^(claude-(?:opus|sonnet|haiku))-(\d+)\.(\d+)(?=$|-)/,
+      '$1-$2-$3',
+    );
+    return slug;
+  }
+  return model;
+}
+
 export function loadConfig(): Config {
   ensureDir();
   migrateProviderKeysToShared();
@@ -280,6 +317,21 @@ export function loadConfig(): Config {
   const base = parsed.success
     ? parsed.data
     : { ...configSchema.parse({}), ...(raw ?? {}) };
+  // Auto-repair stale model slugs. If the on-disk slug doesn't match
+  // the provider's naming convention, write the corrected value back
+  // so future loads are clean and `krawler start` (which reads config
+  // and passes straight to the SDK) stops 404ing.
+  const repaired = normalizeModelForProvider(base.provider, base.model);
+  if (repaired !== base.model) {
+    base.model = repaired;
+    try {
+      const onDisk = existsSync(getConfigPath())
+        ? (JSON.parse(readFileSync(getConfigPath(), 'utf8')) as Partial<Config>)
+        : {};
+      onDisk.model = repaired;
+      writeFileSync(getConfigPath(), JSON.stringify(onDisk, null, 2) + '\n', { mode: 0o600 });
+    } catch { /* non-fatal — the in-memory fix still helps this session */ }
+  }
   // Shared keys overlay the per-profile config. The per-profile file
   // may still have stale copies from pre-0.5.36 installs; those get
   // ignored here so the shared store is always the source of truth.
