@@ -16,6 +16,7 @@ import { streamText } from 'ai';
 
 import { getActiveCredentials, loadConfig, appendActivityLog } from '../config.js';
 import { KrawlerClient } from '../krawler.js';
+import { runHeartbeat } from '../loop.js';
 import { buildModel } from '../model.js';
 import { fetchInstalledSkillsMd } from '../skill-refs.js';
 import { appendTurn, getChatHistoryPath, loadRecentTurns } from './history.js';
@@ -150,15 +151,80 @@ export async function runChatRepl(): Promise<void> {
     system = `You are @${me.handle} on Krawler. Chat with your owner.`;
   }
 
+  // ── Idle-heartbeat state ────────────────────────────────────────
+  // sd 2026-04-20: "if i am typing it doesnt do heartbeat. it only
+  // does it when idle, and it shows a little icon when posting."
+  // Implementation: track lastActivity (bumped on any keypress and
+  // at the end of every chat turn), refuse to fire a heartbeat when
+  // a chat turn is in flight, and refuse again when a heartbeat is
+  // already in flight. 45s of quiet + nothing in flight = go.
+  const IDLE_THRESHOLD_MS = 45_000;
+  const TICK_MS = 15_000;
+  let lastActivity = Date.now();
+  let chatInflight = false;
+  let heartbeatInflight = false;
+
+  // readline in terminal mode already calls emitKeypressEvents on
+  // stdin internally; we can listen to the 'keypress' signal without
+  // setting raw mode ourselves. Each keystroke (including backspace,
+  // arrows, etc) counts as activity.
+  const onKeypress = () => { lastActivity = Date.now(); };
+  process.stdin.on('keypress', onKeypress);
+
+  const fireIdleHeartbeat = async () => {
+    if (chatInflight || heartbeatInflight) return;
+    if (Date.now() - lastActivity < IDLE_THRESHOLD_MS) return;
+    heartbeatInflight = true;
+    rl.pause();
+    process.stdout.write(`\n  ${DIM}> starting heartbeat${RESET}\n`);
+    try {
+      const { summary } = await runHeartbeat('scheduled', {
+        onAction: (a) => {
+          const marker = a.ok ? '\u2713' : '\u2717';
+          process.stdout.write(`  ${DIM}> ${a.summary} ${marker}${RESET}\n`);
+        },
+      });
+      process.stdout.write(`  ${DIM}> heartbeat: ${summary}${RESET}\n`);
+    } catch (e) {
+      process.stdout.write(`  ${DIM}> heartbeat error: ${(e as Error).message}${RESET}\n`);
+      appendActivityLog({
+        ts: new Date().toISOString(),
+        level: 'warn',
+        msg: `chat idle-heartbeat: ${(e as Error).message}`,
+      });
+    }
+    heartbeatInflight = false;
+    // Reset idle clock so the same idle window doesn't immediately
+    // re-fire. The human gets a full IDLE_THRESHOLD_MS of quiet
+    // before another heartbeat kicks in.
+    lastActivity = Date.now();
+    rl.resume();
+    rl.prompt();
+  };
+
+  const idleTicker = setInterval(() => { void fireIdleHeartbeat(); }, TICK_MS);
+
   rl.prompt();
 
   rl.on('line', async (rawLine) => {
     const line = rawLine.trim();
+    // User activity: bump idle clock even on an empty enter.
+    lastActivity = Date.now();
     if (!line) { rl.prompt(); return; }
     if (line === '/exit' || line === '/quit') {
       rl.close();
       return;
     }
+    // If a heartbeat is running, hold this input until it clears so
+    // we don't trigger a second model call concurrently with one
+    // that's already mid-cycle. readline has already appended the
+    // line to history; we just re-prompt and bail.
+    if (heartbeatInflight) {
+      process.stdout.write(`  ${DIM}hold on, finishing a heartbeat first${RESET}\n`);
+      rl.prompt();
+      return;
+    }
+    chatInflight = true;
 
     // Record the user's turn before any network work so a crash
     // mid-stream doesn't lose their last thing.
@@ -237,11 +303,18 @@ export async function runChatRepl(): Promise<void> {
       appendTurn({ role: 'assistant', content: fullText, ts: new Date().toISOString() });
     }
 
+    // Clear inflight + reset idle clock so the human gets a full
+    // IDLE_THRESHOLD_MS of quiet before a heartbeat butts in.
+    chatInflight = false;
+    lastActivity = Date.now();
+
     rl.resume();
     rl.prompt();
   });
 
   rl.on('close', () => {
+    clearInterval(idleTicker);
+    process.stdin.removeListener('keypress', onKeypress);
     // eslint-disable-next-line no-console
     console.log(`\n  ${DIM}bye${RESET}\n`);
     process.exit(0);
