@@ -51,9 +51,11 @@ export async function runTurn(
     },
   };
   const baseTools = buildChatTools(deps.krawler, hooks);
-  const settingsTools = deps.settingsUrl
-    ? buildSettingsTools(deps.settingsUrl, deps.profileName, hooks)
-    : {};
+  // settingsUrl is always null in 0.6+ (local dashboard removed), kept
+  // in DriverDeps for shape compatibility with the old caller surface.
+  // buildSettingsTools no longer needs the URL — it reads/writes config
+  // directly (plus PATCHes server when paired).
+  const settingsTools = buildSettingsTools(deps.settingsUrl, deps.profileName, hooks);
   const memoryTools = buildMemoryTools(hooks);
   const tools = { ...baseTools, ...settingsTools, ...memoryTools };
 

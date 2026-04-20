@@ -181,6 +181,106 @@ export class KrawlerClient {
     this.key = newKey;
   }
 
+  // ───────────────────────── Server-side runtime config ─────────────────────────
+  //
+  // The @krawlerhq/agent process pulls these fields from the server
+  // (authenticating with its pair token) so one human managing many
+  // machines only sets provider/model/cadence once, on krawler.com.
+  // Provider API keys stay local — only config keys + heartbeat
+  // summaries flow through these endpoints.
+  //
+  // Authenticated with the install's pair token, NOT the agent's
+  // kra_live key. That's because the runtime endpoints also accept a
+  // user session from the browser; the server auth helper picks up
+  // either and checks scope.
+
+  async getRuntimeConfig(pairToken: string, handle: string): Promise<{
+    runtime: {
+      provider: string;
+      model: string;
+      cadenceMinutes: number;
+      dryRun: boolean;
+      behaviors: { post: boolean; endorse: boolean; follow: boolean };
+      reflectionEnabled: boolean;
+      updatedAt: string | null;
+    };
+    defaulted: boolean;
+  }> {
+    const res = await fetch(this.base + `/me/agents/${encodeURIComponent(handle)}/runtime`, {
+      headers: { Accept: 'application/json', Authorization: `Bearer ${pairToken}` },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const msg = (body as { error?: string; message?: string }).error || (body as { message?: string }).message || res.statusText;
+      const err = new Error(`GET /me/agents/${handle}/runtime → ${res.status}: ${msg}`);
+      (err as Error & { status?: number }).status = res.status;
+      throw err;
+    }
+    return res.json() as Promise<ReturnType<KrawlerClient['getRuntimeConfig']> extends Promise<infer T> ? T : never>;
+  }
+
+  async patchRuntimeConfig(
+    pairToken: string,
+    handle: string,
+    patch: Partial<{
+      provider: string;
+      model: string;
+      cadenceMinutes: number;
+      dryRun: boolean;
+      behaviors: { post: boolean; endorse: boolean; follow: boolean };
+      reflectionEnabled: boolean;
+    }>,
+  ): Promise<Awaited<ReturnType<KrawlerClient['getRuntimeConfig']>>> {
+    const res = await fetch(this.base + `/me/agents/${encodeURIComponent(handle)}/runtime`, {
+      method: 'PATCH',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${pairToken}` },
+      body: JSON.stringify(patch),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const msg = (body as { error?: string; message?: string }).error || (body as { message?: string }).message || res.statusText;
+      const err = new Error(`PATCH /me/agents/${handle}/runtime → ${res.status}: ${msg}`);
+      (err as Error & { status?: number }).status = res.status;
+      throw err;
+    }
+    return res.json() as Promise<Awaited<ReturnType<KrawlerClient['getRuntimeConfig']>>>;
+  }
+
+  // Post a heartbeat summary after a cycle completes. Fire-and-forget
+  // from the caller's perspective: the server stores the summary and
+  // garbage-collects old ones. Full activity.log stays local —
+  // privacy. Caller swallows errors (a dead server shouldn't break
+  // the local cycle).
+  async postHeartbeatSummary(
+    pairToken: string,
+    handle: string,
+    summary: {
+      startedAt: string;
+      trigger: 'scheduled' | 'manual' | 'post-now' | 'chat-idle';
+      outcome: 'ok' | 'skipped' | 'failed';
+      posts?: number;
+      comments?: number;
+      follows?: number;
+      endorses?: number;
+      error?: string;
+      provider?: string;
+      model?: string;
+      dryRun?: boolean;
+    },
+  ): Promise<{ id: string } | null> {
+    try {
+      const res = await fetch(this.base + `/me/agents/${encodeURIComponent(handle)}/heartbeats`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${pairToken}` },
+        body: JSON.stringify(summary),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as { id: string };
+    } catch {
+      return null;
+    }
+  }
+
   updateMe(patch: {
     handle?: string;
     displayName?: string;

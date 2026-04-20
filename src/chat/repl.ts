@@ -10,18 +10,15 @@
 // returns a promise that resolves when the user exits.
 
 import { readFileSync } from 'node:fs';
-import { createServer as createNetServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { render } from 'ink';
-import open from 'open';
 import React from 'react';
 
 import { getActiveCredentials, loadConfig, appendActivityLog, readActivityLog } from '../config.js';
 import { meWithAutoRotate } from '../auto-rotate.js';
 import { KrawlerClient } from '../krawler.js';
-import { buildServer } from '../server.js';
 import { fetchInstalledSkillsMd } from '../skill-refs.js';
 import { getChatHistoryPath } from './history.js';
 import { greetingLine } from './banner.js';
@@ -45,7 +42,7 @@ function renderHarnessFacts(f: HarnessFacts): string {
   return [
     '-- harness facts (you are running inside `@krawlerhq/agent`; when the human asks about your local runtime, answer from THIS block, not from memory) --',
     `- harness package: @krawlerhq/agent v${f.version} (MIT, source: https://github.com/krawlerhq/krawler-agent)`,
-    `- local settings page: ${f.settingsUrl ?? '(not running)'}. The human pastes Krawler + model API keys there, switches models, sees installed skills, and manages profiles.`,
+    `- config files: Krawler agent key + provider choice at ~/.config/krawler-agent${f.profile === 'default' ? '' : `/profiles/${f.profile}`}/config.json, provider API keys (Anthropic/OpenAI/Google/OpenRouter/Ollama) shared across every profile at ~/.config/krawler-agent/shared-keys.json. Provider/model/cadence/dryRun for THIS agent are managed at https://krawler.com/agent/@<handle> (pair the install with \`krawler login\` first).`,
     `- active profile: "${f.profile}". Its config lives at ~/.config/krawler-agent${f.profile === 'default' ? '/config.json' : `/profiles/${f.profile}/config.json`}.`,
     `- chat history file: ~/.config/krawler-agent${f.profile === 'default' ? '' : `/profiles/${f.profile}`}/chat.jsonl. You DO NOT need to manage it; the REPL appends turns automatically.`,
     `- current model: ${f.provider}/${f.model}. Changed via the settings page.`,
@@ -230,18 +227,6 @@ You also have memory tools (rememberFact, recallFacts, forgetFact) backed by a l
   return pieces.filter((p) => p !== '').join('\n');
 }
 
-function probePort(host: string, port: number): Promise<boolean> {
-  return new Promise((resolvePromise) => {
-    const tester = createNetServer();
-    tester.once('error', () => {
-      try { tester.close(); } catch { /* ignore */ }
-      resolvePromise(false);
-    });
-    tester.once('listening', () => tester.close(() => resolvePromise(true)));
-    tester.listen(port, host);
-  });
-}
-
 function readOwnVersion(): string {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -275,29 +260,13 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     process.exit(1);
   }
 
-  // Start the settings server before doing anything else so the URL
-  // is available for both the fresh-install wait AND the harness
-  // facts block.
-  let settingsUrl: string | null = null;
-  try {
-    const app = await buildServer();
-    const host = '127.0.0.1';
-    let bound: number | null = null;
-    for (let p = 8717; p < 8727; p++) {
-      if (await probePort(host, p)) { bound = p; break; }
-    }
-    if (bound !== null) {
-      settingsUrl = await app.listen({ host, port: bound });
-    } else {
-      try { await app.close(); } catch { /* ignore */ }
-    }
-  } catch (e) {
-    appendActivityLog({
-      ts: new Date().toISOString(),
-      level: 'warn',
-      msg: `chat: settings-server boot failed (non-fatal): ${(e as Error).message}`,
-    });
-  }
+  // 0.6 removed the local settings dashboard. The chat REPL used to
+  // bind a Fastify server on :8717 and open the human's browser to it
+  // for first-time key entry; now the human pastes keys into
+  // ~/.config/krawler-agent/config.json or runs `krawler login` to
+  // pair with their agent on krawler.com. Kept settingsUrl=null
+  // everywhere for graceful handling of old HarnessFacts callers.
+  const settingsUrl: string | null = null;
 
   let config = loadConfig();
   const credsPresent = () => {
@@ -316,14 +285,16 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
         !ok ? `${c.provider} creds` : null,
       ].filter(Boolean).join(' + ');
     };
-    const hintUrl = settingsUrl ?? 'http://127.0.0.1:8717/ (not started; run `krawler start` in another terminal)';
     // eslint-disable-next-line no-console
-    console.log(`  ${DIM}waiting for you to paste your ${initialMissing()} at ${hintUrl}${RESET}`);
+    console.log(`  ${DIM}waiting for ${initialMissing()}.${RESET}`);
     // eslint-disable-next-line no-console
-    console.log(`  ${DIM}spawn a Krawler agent at https://krawler.com/agents/ if you don\u2019t have a key yet.${RESET}`);
-    if (settingsUrl && !options.noOpen) {
-      try { await open(settingsUrl); } catch { /* silent */ }
-    }
+    console.log(`  ${DIM}spawn a Krawler agent at https://krawler.com/agents/ then:${RESET}`);
+    // eslint-disable-next-line no-console
+    console.log(`  ${DIM}  \u2022 paste the agent key into ~/.config/krawler-agent/config.json${RESET}`);
+    // eslint-disable-next-line no-console
+    console.log(`  ${DIM}  \u2022 or run \`krawler login\` to pair this install with the agent${RESET}`);
+    // eslint-disable-next-line no-console
+    console.log(`  ${DIM}  \u2022 paste your model provider key into ~/.config/krawler-agent/shared-keys.json${RESET}`);
     await new Promise<void>((resolvePromise) => {
       const tick = setInterval(() => {
         if (credsPresent()) {
