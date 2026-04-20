@@ -1,101 +1,36 @@
-// Chat REPL. Opens when the human types `krawler` with no subcommand.
-// A conversational surface for the agent, distinct from the cadenced
-// heartbeat loop. Phase 1 here: text-in, streaming text-out, history
-// persisted to ~/.config/krawler-agent/<profile>/chat.jsonl. No tool
-// calls (post/follow/endorse), no idle-heartbeat integration : those
-// ship in phase 2 and 3 respectively.
+// Chat REPL entrypoint. Invoked when the human types `krawler` with
+// no subcommand. Phase 1 here: text-in, streaming text-out, tool calls
+// and settings tools, history persisted to chat.jsonl. The UI is
+// Ink-rendered (React for the terminal); the previous readline
+// implementation lives in git history if we ever need it back.
 //
-// Why a separate module from loop.ts: chat history must NEVER leak
-// into the heartbeat prompts and vice-versa (sd 2026-04-20: chat is
-// its own timeline). Module boundary enforces this: nothing in
-// src/chat/ is imported by src/loop.ts.
+// This file owns all the non-UI startup: settings server bind,
+// fresh-install wait, identity fetch, system prompt build, prime
+// directives fetch. Once everything is ready, it mounts <App/> and
+// returns a promise that resolves when the user exits.
 
 import { readFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
-import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-import { stepCountIs, streamText } from 'ai';
+import { render } from 'ink';
 import open from 'open';
+import React from 'react';
 
 import { getActiveCredentials, loadConfig, appendActivityLog, readActivityLog } from '../config.js';
 import { KrawlerClient } from '../krawler.js';
-import { runHeartbeat } from '../loop.js';
-import { buildModel } from '../model.js';
 import { buildServer } from '../server.js';
 import { fetchInstalledSkillsMd } from '../skill-refs.js';
-import { appendTurn, getChatHistoryPath, loadRecentTurns } from './history.js';
-import type { ChatTurn } from './history.js';
-import { greetingLine, printBanner } from './banner.js';
-import { buildChatTools } from './tools.js';
-import { buildSettingsTools } from './settings-tools.js';
-import { buildMemoryTools } from './memory-tools.js';
+import { getChatHistoryPath } from './history.js';
+import { greetingLine } from './banner.js';
 import { getMemoryPath, renderMemoryForPrompt } from './memory.js';
+import { App } from './ui/App.js';
+import type { HarnessContext } from './ui/types.js';
 
-// ANSI escapes. Kept small + inline so there's no color-lib dep.
 const DIM = '\u001b[2m';
 const RESET = '\u001b[0m';
-const BRAND = '\u001b[38;5;31m';
-const ITALIC = '\u001b[3m';
 
-function renderPrompt(): string {
-  // "you>" in brand blue so the REPL visually separates user turns
-  // from agent stream. The trailing space is the readline separator.
-  return `${BRAND}you>${RESET} `;
-}
-
-// Agent reply prefix. Claude-Code-style solid bullet so the eye
-// catches the shift from tool-thoughts (dim "> verb…") to the
-// agent's actual voice. Brand blue keeps Krawler's identity.
-function renderAgentPrefix(_handle: string): string {
-  return `${BRAND}\u25CF${RESET} `;
-}
-
-// Sparkle-style thinking spinner shown while the model is working
-// before any text or tool call has surfaced. Frames cycle through
-// the asterisk/sparkle family so it reads as "something's happening"
-// without being a busy wheel. A verb is picked once per turn so the
-// human sees variety over a session without it feeling random every
-// frame.
-const SPINNER_FRAMES = ['\u273B', '\u2733', '\u2734', '\u2737', '\u2736'];
-const THINKING_VERBS = [
-  'Thinking', 'Reflecting', 'Considering', 'Pondering', 'Deliberating',
-  'Scheming', 'Improvising', 'Drafting', 'Composing', 'Brewing',
-  'Cogitating', 'Wondering', 'Mulling', 'Weighing', 'Contemplating',
-];
-
-interface Spinner {
-  stop: () => void;
-}
-
-function startSpinner(): Spinner {
-  const verb = THINKING_VERBS[Math.floor(Math.random() * THINKING_VERBS.length)] ?? 'Thinking';
-  let i = 0;
-  // Hide the cursor while the spinner runs; restore on stop. Without
-  // this the terminal cursor sits mid-line and distracts.
-  process.stdout.write('\u001b[?25l');
-  const draw = () => {
-    const frame = SPINNER_FRAMES[i % SPINNER_FRAMES.length];
-    process.stdout.write(`\r  ${BRAND}${frame}${RESET} ${DIM}${ITALIC}${verb}\u2026${RESET}`);
-    i++;
-  };
-  draw();
-  const id = setInterval(draw, 120);
-  return {
-    stop: () => {
-      clearInterval(id);
-      // Clear the whole line and restore the cursor.
-      process.stdout.write('\r\u001b[2K\u001b[?25h');
-    },
-  };
-}
-
-// Resolved at REPL startup and woven into the system prompt so the
-// agent actually knows facts about the harness it's running inside.
-// Without this, questions like "where's the localhost page" or "how
-// do I rotate my key" get hallucinated answers ("probably :3000,
-// check the README"). This block is the truth on those details.
 interface HarnessFacts {
   version: string;
   settingsUrl: string | null;
@@ -129,7 +64,6 @@ function renderHarnessFacts(f: HarnessFacts): string {
   ].join('\n');
 }
 
-// Short relative-time helper for activity-log and feed rendering.
 function relTimeShort(iso: string): string {
   const d = Math.max(0, Date.now() - new Date(iso).getTime());
   const m = Math.floor(d / 60000);
@@ -146,9 +80,6 @@ function clipOneLine(s: string, max = 140): string {
   return oneLine.length <= max ? oneLine : oneLine.slice(0, max - 1) + '\u2026';
 }
 
-// Render the agent's recent feed as a compact block the model can
-// reason about. Skipped silently on fetch failure (chat stays
-// usable even if the Krawler API is briefly degraded).
 function renderFeed(posts: Array<{ id: string; body: string; createdAt: string; author: { handle: string; displayName: string } }>): string {
   if (!posts || posts.length === 0) return '';
   const lines = posts.slice(0, 20).map((p) =>
@@ -161,10 +92,6 @@ function renderFeed(posts: Array<{ id: string; body: string; createdAt: string; 
   ].join('\n');
 }
 
-// Render the agent's OWN recent activity log. Gives it self-awareness
-// for questions like "did my last post land?" or "why haven't I
-// posted today?". Filter out heartbeat-start/end noise since those
-// are cadence chatter, not something the human cares about.
 function renderActivity(entries: Array<{ ts: string; level: string; msg: string }>): string {
   if (!entries || entries.length === 0) return '';
   const useful = entries
@@ -181,12 +108,6 @@ function renderActivity(entries: Array<{ ts: string; level: string; msg: string 
   ].join('\n');
 }
 
-// Canonical prime-directives doc. Fetched from krawler.com at REPL
-// start (same pattern as protocol.md); falls back to a minimal
-// hardcoded version when the fetch fails so the directive doesn't
-// silently disappear from the system prompt. Headings are extracted
-// so we can print them to the terminal on launch; fullText goes
-// into the system prompt.
 interface PrimeDirectives {
   fullText: string;
   headings: string[];
@@ -232,8 +153,6 @@ async function fetchPrimeDirectives(baseUrl: string): Promise<PrimeDirectives> {
     });
     if (!res.ok) return FALLBACK_DIRECTIVES;
     const raw = await res.text();
-    // Strip leading frontmatter block if present (same convention
-    // protocol.md/agent.md use).
     const body = raw.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
     const headings = Array.from(body.matchAll(/^##\s+(.+)$/gm)).map((m) => (m[1] ?? '').trim()).filter(Boolean);
     if (headings.length === 0) return FALLBACK_DIRECTIVES;
@@ -243,21 +162,12 @@ async function fetchPrimeDirectives(baseUrl: string): Promise<PrimeDirectives> {
   }
 }
 
-function printDirectives(d: PrimeDirectives): void {
-  // eslint-disable-next-line no-console
-  console.log(`  ${BRAND}prime directives${RESET}`);
-  for (const h of d.headings) {
-    // eslint-disable-next-line no-console
-    console.log(`  ${DIM}  \u2022 ${h}${RESET}`);
-  }
-  // eslint-disable-next-line no-console
-  console.log(`  ${DIM}  source: ${'https://krawler.com/prime-directives.md'}${RESET}\n`);
-}
-
-async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; displayName: string; bio: string | null; skillRefs?: unknown }, facts: HarnessFacts, directives: PrimeDirectives): Promise<string> {
-  // Assemble the composite. All fetches are best-effort; anything
-  // that fails is just omitted from the prompt. The chat REPL
-  // survives a briefly-unavailable Krawler API.
+async function buildSystemPrompt(
+  krawler: KrawlerClient,
+  me: { handle: string; displayName: string; bio: string | null; skillRefs?: unknown },
+  facts: HarnessFacts,
+  directives: PrimeDirectives,
+): Promise<string> {
   const base = (loadConfig().krawlerBaseUrl || '').replace(/\/api\/?$/, '');
   let protocolMd = '';
   let agentMd = '';
@@ -281,12 +191,6 @@ async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; d
     activityBlock = renderActivity(readActivityLog(60));
   } catch { /* non-fatal */ }
 
-  // Prime directives first. Canonical source is
-  // krawler.com/prime-directives.md, fetched at REPL startup and
-  // passed in. Directive #1 is the autonomy principle; #2-10 cover
-  // upskilling (self + human), problem-solving, honesty, credit,
-  // key hygiene, ethics, focus, and learning-loop hygiene. All
-  // harnesses are expected to inject this block.
   const directiveBlock = [
     '== PRIME DIRECTIVES (canonical source: https://krawler.com/prime-directives.md) ==',
     directives.fullText,
@@ -325,18 +229,6 @@ You also have memory tools (rememberFact, recallFacts, forgetFact) backed by a l
   return pieces.filter((p) => p !== '').join('\n');
 }
 
-// Build messages array from history + new user input. Cap enforced by
-// history.loadRecentTurns().
-function toModelMessages(history: ChatTurn[], userInput: string): Array<{ role: 'user' | 'assistant'; content: string }> {
-  return [
-    ...history.map((t) => ({ role: t.role, content: t.content })),
-    { role: 'user' as const, content: userInput },
-  ];
-}
-
-// Probe a port for availability before attempting to bind. Fastify
-// emits EADDRINUSE asynchronously; catching it around app.listen is
-// too late for a clean error path.
 function probePort(host: string, port: number): Promise<boolean> {
   return new Promise((resolvePromise) => {
     const tester = createNetServer();
@@ -349,8 +241,6 @@ function probePort(host: string, port: number): Promise<boolean> {
   });
 }
 
-// Read the daemon's own package.json at runtime so we can tell the
-// chat model its real version number without hard-coding it.
 function readOwnVersion(): string {
   try {
     const here = dirname(fileURLToPath(import.meta.url));
@@ -362,18 +252,31 @@ function readOwnVersion(): string {
   }
 }
 
-export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<void> {
-  printBanner();
+// Strip ANSI escapes from the greeting string so Ink can colour it
+// itself. The legacy greetingLine() returns a pre-escaped string;
+// Ink's <Text> would double-render those codes.
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\u001b\[[0-9;]*m/g, '');
+}
 
-  // Start the local settings server first so that (a) if creds are
-  // missing the error message can point the human at a LIVE URL,
-  // (b) the chat system prompt can include the URL as a harness
-  // fact, and (c) the human can tweak config in a browser while
-  // talking to the agent in the same process.
-  //
-  // Scans ports 8717-8726. If a `krawler start` is already running
-  // on 8717 in another terminal, we fall up to 8718; the agent's
-  // harness-facts block gets the actual bound URL.
+export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<void> {
+  // Ink uses terminal raw mode to capture keypresses. When stdin is
+  // piped or otherwise not a TTY (cron, CI, subprocess without a
+  // pty), raw mode can't be enabled and the REPL is unusable. Bail
+  // early with a friendly message instead of crashing mid-render.
+  if (!process.stdin.isTTY) {
+    // eslint-disable-next-line no-console
+    console.error(
+      'krawler chat needs an interactive terminal. ' +
+      'Run `krawler` from a real shell, or use `krawler start` for headless mode.',
+    );
+    process.exit(1);
+  }
+
+  // Start the settings server before doing anything else so the URL
+  // is available for both the fresh-install wait AND the harness
+  // facts block.
   let settingsUrl: string | null = null;
   try {
     const app = await buildServer();
@@ -385,13 +288,9 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     if (bound !== null) {
       settingsUrl = await app.listen({ host, port: bound });
     } else {
-      // All ports busy: skip the local server silently. The agent's
-      // harness-facts block will report it as "(not running)".
       try { await app.close(); } catch { /* ignore */ }
     }
   } catch (e) {
-    // Boot failure is non-fatal for chat : the settings page is a
-    // convenience, not a requirement. Log and continue.
     appendActivityLog({
       ts: new Date().toISOString(),
       level: 'warn',
@@ -399,13 +298,6 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     });
   }
 
-  // Fresh-install flow: when either the Krawler key or the
-  // model-provider creds are missing, DON'T exit. Keep the settings
-  // server up, open the browser at it (user can paste keys there),
-  // and poll config.json every 3s until both keys are present.
-  // Once they are, fall through to the normal REPL startup. Matches
-  // sd's ask on 2026-04-20: "launch localhost to paste the keys
-  // without which the agent will not work."
   let config = loadConfig();
   const credsPresent = () => {
     const c = loadConfig();
@@ -439,15 +331,12 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
           resolvePromise();
         }
       }, 3000);
-      // Ctrl+C during the wait: exit cleanly, don't leave the
-      // interval running.
       process.once('SIGINT', () => {
         clearInterval(tick);
         process.stdout.write(`\n  ${DIM}aborted${RESET}\n`);
         process.exit(0);
       });
     });
-    // Reload now that keys landed.
     config = loadConfig();
   }
   const creds = getActiveCredentials(config);
@@ -462,9 +351,6 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     process.exit(1);
   }
 
-  // Heads-up row so the human sees which identity + model they're
-  // about to chat with. Placeholder handles get a subtle cue that
-  // the agent hasn't claimed its real name yet.
   const { currentProfileName } = await import('../profile-context.js');
   const profileName = currentProfileName();
   const harnessFacts: HarnessFacts = {
@@ -475,303 +361,52 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     provider: config.provider,
     model: config.model,
   };
-  const isPlaceholder = /^agent-[0-9a-f]{8}$/.test(me.handle);
-  const displayLine = isPlaceholder
-    ? `  ${DIM}@${me.handle} (placeholder) \u00b7 ${config.provider}/${config.model} \u00b7 first chat will also claim an identity${RESET}`
-    : `  ${DIM}@${me.handle}${me.displayName ? ` \u2014 ${me.displayName}` : ''} \u00b7 ${config.provider}/${config.model}${RESET}`;
-  // eslint-disable-next-line no-console
-  console.log(displayLine);
-  // eslint-disable-next-line no-console
-  console.log(`  ${greetingLine(me.displayName)}`);
-  if (settingsUrl) {
-    // eslint-disable-next-line no-console
-    console.log(`  ${DIM}settings: ${settingsUrl}  \u00b7  history: ${getChatHistoryPath()}  \u00b7  /help for commands${RESET}\n`);
-  } else {
-    // eslint-disable-next-line no-console
-    console.log(`  ${DIM}settings: (couldn't bind; another krawler instance may own :8717)  \u00b7  history: ${getChatHistoryPath()}  \u00b7  /help for commands${RESET}\n`);
-  }
 
-  // Fetch + print the canonical prime directives. Happens AFTER the
-  // identity/settings lines so the directives land as the final
-  // startup block the human reads, right above the prompt. The full
-  // fetched text is also fed into the system prompt below.
   const directives = await fetchPrimeDirectives(config.krawlerBaseUrl);
-  printDirectives(directives);
 
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-    prompt: renderPrompt(),
-  });
-
-  // Build system prompt once per REPL session. Re-build only if the
-  // human edits agent.md on krawler.com during the session (rare;
-  // phase 1 skips that refresh).
   let system: string;
   try {
-    system = await buildSystemPrompt(krawler, me as { handle: string; displayName: string; bio: string | null; skillRefs?: unknown }, harnessFacts, directives);
+    system = await buildSystemPrompt(
+      krawler,
+      me as { handle: string; displayName: string; bio: string | null; skillRefs?: unknown },
+      harnessFacts,
+      directives,
+    );
   } catch (e) {
     // eslint-disable-next-line no-console
     console.log(`  ${DIM}could not build system prompt: ${(e as Error).message}. chatting with a minimal one.${RESET}`);
     system = `You are @${me.handle} on Krawler. Chat with your owner.\n\n${renderHarnessFacts(harnessFacts)}`;
   }
 
-  // ── Idle-heartbeat state ────────────────────────────────────────
-  // sd 2026-04-20: "if i am typing it doesnt do heartbeat. it only
-  // does it when idle, and it shows a little icon when posting."
-  // Implementation: track lastActivity (bumped on any keypress and
-  // at the end of every chat turn), refuse to fire a heartbeat when
-  // a chat turn is in flight, and refuse again when a heartbeat is
-  // already in flight. 45s of quiet + nothing in flight = go.
-  const IDLE_THRESHOLD_MS = 45_000;
-  const TICK_MS = 15_000;
-  let lastActivity = Date.now();
-  let chatInflight = false;
-  let heartbeatInflight = false;
-
-  // readline in terminal mode already calls emitKeypressEvents on
-  // stdin internally; we can listen to the 'keypress' signal without
-  // setting raw mode ourselves. Each keystroke (including backspace,
-  // arrows, etc) counts as activity.
-  const onKeypress = () => { lastActivity = Date.now(); };
-  process.stdin.on('keypress', onKeypress);
-
-  const fireIdleHeartbeat = async () => {
-    if (chatInflight || heartbeatInflight) return;
-    if (Date.now() - lastActivity < IDLE_THRESHOLD_MS) return;
-    heartbeatInflight = true;
-    rl.pause();
-    process.stdout.write(`\n  ${DIM}${ITALIC}> starting heartbeat${RESET}\n`);
-    try {
-      const { summary } = await runHeartbeat('scheduled', {
-        onAction: (a) => {
-          const marker = a.ok ? '\u2713' : '\u2717';
-          process.stdout.write(`  ${DIM}${ITALIC}> ${a.summary} ${marker}${RESET}\n`);
-        },
-      });
-      process.stdout.write(`  ${DIM}${ITALIC}> heartbeat: ${summary}${RESET}\n`);
-    } catch (e) {
-      process.stdout.write(`  ${DIM}${ITALIC}> heartbeat error: ${(e as Error).message}${RESET}\n`);
-      appendActivityLog({
-        ts: new Date().toISOString(),
-        level: 'warn',
-        msg: `chat idle-heartbeat: ${(e as Error).message}`,
-      });
-    }
-    heartbeatInflight = false;
-    // Reset idle clock so the same idle window doesn't immediately
-    // re-fire. The human gets a full IDLE_THRESHOLD_MS of quiet
-    // before another heartbeat kicks in.
-    lastActivity = Date.now();
-    rl.resume();
-    rl.prompt();
+  const ctx: HarnessContext = {
+    version: harnessFacts.version,
+    settingsUrl,
+    profile: profileName,
+    krawlerBaseUrl: config.krawlerBaseUrl,
+    provider: config.provider,
+    model: config.model,
+    handle: me.handle,
+    displayName: me.displayName ?? null,
+    historyPath: getChatHistoryPath(),
+    directiveHeadings: directives.headings,
+    greeting: stripAnsi(greetingLine(me.displayName)),
   };
 
-  const idleTicker = setInterval(() => { void fireIdleHeartbeat(); }, TICK_MS);
-
-  rl.prompt();
-
-  rl.on('line', async (rawLine) => {
-    const line = rawLine.trim();
-    // User activity: bump idle clock even on an empty enter.
-    lastActivity = Date.now();
-    if (!line) { rl.prompt(); return; }
-    if (line === '/exit' || line === '/quit') {
-      rl.close();
-      return;
-    }
-    if (line === '/help' || line === '/?') {
-      process.stdout.write([
-        '',
-        `  ${BRAND}slash commands in this REPL${RESET}`,
-        `  ${DIM}  /help, /?          this list${RESET}`,
-        `  ${DIM}  /profiles          list all local agent profiles${RESET}`,
-        `  ${DIM}  /switch <name>     prints the command to re-run with a different profile${RESET}`,
-        `  ${DIM}  /exit, /quit       leave${RESET}`,
-        '',
-        `  ${BRAND}things to ask the agent in plain language${RESET}`,
-        `  ${DIM}  "what's on my feed?"                 agent reads recent feed and answers${RESET}`,
-        `  ${DIM}  "post something about X"             agent decides whether to post (directive #1)${RESET}`,
-        `  ${DIM}  "what have you been up to?"          agent reads its own activity log${RESET}`,
-        `  ${DIM}  "switch to claude-sonnet-4-6"        agent calls setModel${RESET}`,
-        `  ${DIM}  "cadence every 2 hours"              agent calls setCadence${RESET}`,
-        `  ${DIM}  "turn dry-run on"                    agent calls setDryRun${RESET}`,
-        `  ${DIM}  "list my installed skills"           agent calls listInstalledSkills${RESET}`,
-        `  ${DIM}  "sync the X skill"                   agent calls syncInstalledSkill${RESET}`,
-        `  ${DIM}  "add another agent"                  agent calls addProfile${RESET}`,
-        `  ${DIM}  "remember that my name is X"         agent calls rememberFact${RESET}`,
-        `  ${DIM}  "what do you remember about me?"     agent calls recallFacts${RESET}`,
-        `  ${DIM}  "forget my email"                    agent calls forgetFact${RESET}`,
-        '',
-        `  ${BRAND}CLI subcommands you can run in another terminal${RESET}`,
-        `  ${DIM}  krawler --profile <name>             open chat for a different profile${RESET}`,
-        `  ${DIM}  krawler start                        run headless (heartbeat + settings page, no chat)${RESET}`,
-        `  ${DIM}  krawler status                       print identity + config and exit${RESET}`,
-        `  ${DIM}  krawler heartbeat                    fire one heartbeat and exit${RESET}`,
-        `  ${DIM}  krawler logs                         tail the activity log${RESET}`,
-        `  ${DIM}  krawler config                       print redacted config${RESET}`,
-        `  ${DIM}  krawler skill list/show/sync         manage installed skills${RESET}`,
-        `  ${DIM}  krawler playbook list                legacy v1.0 local routing playbooks${RESET}`,
-        '',
-      ].join('\n') + '\n');
-      rl.prompt();
-      return;
-    }
-    if (line === '/profiles') {
-      try {
-        const { listProfiles, DEFAULT_PROFILE } = await import('../profile-context.js');
-        const names = listProfiles();
-        if (!names.includes(DEFAULT_PROFILE)) names.unshift(DEFAULT_PROFILE);
-        process.stdout.write(`  ${DIM}profiles on this machine:${RESET}\n`);
-        for (const n of names) {
-          const marker = n === profileName ? '*' : ' ';
-          process.stdout.write(`  ${DIM}  ${marker} ${n}${RESET}\n`);
-        }
-        process.stdout.write(`  ${DIM}to switch: Ctrl+C, then run \`krawler --profile <name>\`${RESET}\n\n`);
-      } catch (e) {
-        process.stdout.write(`  ${DIM}profile list failed: ${(e as Error).message}${RESET}\n`);
-      }
-      rl.prompt();
-      return;
-    }
-    if (line.startsWith('/switch')) {
-      // Full in-process switch would need re-running all the startup
-      // work (settings server re-bind, /me refetch, system prompt
-      // rebuild, heartbeat state reset). That's a non-trivial
-      // refactor; for now just tell the human the stable command
-      // that does the right thing.
-      const want = line.slice(7).trim() || '<name>';
-      process.stdout.write(`  ${DIM}to switch profile: Ctrl+C, then run \`krawler --profile ${want}\`${RESET}\n\n`);
-      rl.prompt();
-      return;
-    }
-    // If a heartbeat is running, hold this input until it clears so
-    // we don't trigger a second model call concurrently with one
-    // that's already mid-cycle. readline has already appended the
-    // line to history; we just re-prompt and bail.
-    if (heartbeatInflight) {
-      process.stdout.write(`  ${DIM}hold on, finishing a heartbeat first${RESET}\n`);
-      rl.prompt();
-      return;
-    }
-    chatInflight = true;
-
-    // Record the user's turn before any network work so a crash
-    // mid-stream doesn't lose their last thing.
-    const userTurn: ChatTurn = { role: 'user', content: line, ts: new Date().toISOString() };
-    appendTurn(userTurn);
-
-    const history = loadRecentTurns();
-    const messages = toModelMessages(history.slice(0, -1), line); // -1 to avoid the turn we just appended
-
-    // Model call. Pause readline while streaming so the agent's
-    // output doesn't fight the user's prompt. Start a sparkle-
-    // spinner immediately so the REPL shows "* Thinking…" while
-    // the model is working; stopped the moment any text or tool
-    // surfaces.
-    rl.pause();
-    let spinner: Spinner | null = startSpinner();
-    const stopSpinnerIfRunning = () => {
-      if (spinner) {
-        spinner.stop();
-        spinner = null;
-      }
-    };
-    let fullText = '';
-    // agentPrefixActive means the ● prefix is currently on the
-    // current line and we can stream text directly into it. Starts
-    // false because the spinner is still on the line; the first
-    // text-delta promotes the state.
-    let agentPrefixActive = false;
-    // Tool hooks: render a "  > thought..." line when the model
-    // decides to call one, then append " ok" / " failed: X" when
-    // execute() resolves. First side effect when a tool fires also
-    // stops the spinner if it was still running.
-    let toolLineOpen = false;
-    const hooks = {
-      onToolStart: (_name: string, thought: string) => {
-        stopSpinnerIfRunning();
-        if (agentPrefixActive && !fullText.endsWith('\n')) {
-          process.stdout.write('\n');
-        }
-        agentPrefixActive = false;
-        process.stdout.write(`  ${DIM}${ITALIC}> ${thought}${RESET}`);
-        toolLineOpen = true;
+  const { waitUntilExit } = render(
+    React.createElement(App, {
+      ctx,
+      krawler,
+      driver: {
+        krawler,
+        provider: config.provider,
+        modelName: config.model,
+        apiKey: creds.apiKey,
+        ollamaBaseUrl: creds.baseUrl,
+        settingsUrl,
+        profileName,
       },
-      onToolEnd: (_name: string, outcome: string, ok: boolean) => {
-        const marker = ok ? '\u2713' : '\u2717';
-        process.stdout.write(` ${DIM}${marker} ${outcome}${RESET}\n`);
-        toolLineOpen = false;
-      },
-    };
-    // Krawler action tools always present; settings tools only when
-    // the local settings server actually bound (rare but real case
-    // when another krawler instance owns every port in the scan
-    // range). Memory tools always present since they hit the local
-    // filesystem. The spread is guarded so the ToolSet type stays clean.
-    const baseTools = buildChatTools(krawler, hooks);
-    const settingsTools = settingsUrl ? buildSettingsTools(settingsUrl, profileName, hooks) : {};
-    const memoryTools = buildMemoryTools(hooks);
-    const tools = { ...baseTools, ...settingsTools, ...memoryTools };
-    try {
-      const result = streamText({
-        model: buildModel({
-          provider: config.provider,
-          model: config.model,
-          apiKey: creds.apiKey,
-          ollamaBaseUrl: creds.baseUrl,
-        }),
-        system,
-        messages,
-        tools,
-        // Allow the model to: text, tool, text, tool, text within a
-        // single user turn. 4 is generous; most turns use 1-2.
-        stopWhen: stepCountIs(4),
-      });
-      for await (const chunk of result.textStream) {
-        if (!agentPrefixActive) {
-          // First text of the turn (or resumption after a tool call).
-          // Stop the thinking spinner if it's still running and open
-          // a fresh agent line with the ● bullet.
-          stopSpinnerIfRunning();
-          process.stdout.write(renderAgentPrefix(me.handle));
-          agentPrefixActive = true;
-        }
-        process.stdout.write(chunk);
-        fullText += chunk;
-      }
-      stopSpinnerIfRunning();
-      if (toolLineOpen) process.stdout.write('\n');
-      if (fullText && !fullText.endsWith('\n')) process.stdout.write('\n');
-    } catch (e) {
-      stopSpinnerIfRunning();
-      process.stdout.write(`\n  ${DIM}model error: ${(e as Error).message}${RESET}\n`);
-      appendActivityLog({
-        ts: new Date().toISOString(),
-        level: 'warn',
-        msg: `chat: model call failed: ${(e as Error).message}`,
-      });
-    }
-
-    if (fullText.trim().length > 0) {
-      appendTurn({ role: 'assistant', content: fullText, ts: new Date().toISOString() });
-    }
-
-    // Clear inflight + reset idle clock so the human gets a full
-    // IDLE_THRESHOLD_MS of quiet before a heartbeat butts in.
-    chatInflight = false;
-    lastActivity = Date.now();
-
-    rl.resume();
-    rl.prompt();
-  });
-
-  rl.on('close', () => {
-    clearInterval(idleTicker);
-    process.stdin.removeListener('keypress', onKeypress);
-    // eslint-disable-next-line no-console
-    console.log(`\n  ${DIM}bye${RESET}\n`);
-    process.exit(0);
-  });
+      system,
+    }),
+  );
+  await waitUntilExit();
 }
