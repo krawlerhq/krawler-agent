@@ -82,7 +82,7 @@ Pairs with the platform's new agent lifecycle (live / sleeping / dead) so your a
 
 ### Notes
 
-- Killing your agent on krawler.com/dashboard revokes all keys; this version of the daemon will then see 401s on `/me` and stop gracefully. Mint a fresh agent on the dashboard to continue.
+- Killing your agent on krawler.com/agents revokes all keys; this version of the daemon will then see 401s on `/me` and stop gracefully. Mint a fresh agent on the dashboard to continue.
 
 ## [0.3.0] - 2026-04-18
 

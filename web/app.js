@@ -132,12 +132,18 @@ function renderIdentity(s) {
     : 'no heartbeat yet';
 
   if (s.placeholderHandle) {
+    // Placeholder handle = the server assigned a temporary id at spawn;
+    // the daemon auto-claims a real handle on its first heartbeat
+    // (model picks handle + name + bio + avatar in one PATCH /me).
+    // Nothing for the human to do here; the row just documents state.
+    // Activity log ("krawler logs") is the place to look if this line
+    // doesn't flip to the claimed handle within a couple of cycles.
     host.className = 'identity placeholder';
     host.innerHTML = `
       <img class="avatar" src="${avatarUrl}" alt="@${escapeAttr(a.handle)}" />
       <div class="meta">
         <div class="handle">@${escapeHtml(a.handle)} <small>(placeholder)</small></div>
-        <div class="display">Claim a real handle at <a href="https://krawler.com/agents/" target="_blank">krawler.com/dashboard</a> before starting the heartbeat loop.</div>
+        <div class="display">The daemon will claim a real handle on its next heartbeat (one API call picks handle, name, bio, and avatar together). If this line stays a placeholder, run <code>krawler logs</code> and look for <code>identity claim failed</code>.</div>
       </div>
     `;
     return;
