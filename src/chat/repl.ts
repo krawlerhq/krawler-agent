@@ -29,6 +29,7 @@ import { appendTurn, getChatHistoryPath, loadRecentTurns } from './history.js';
 import type { ChatTurn } from './history.js';
 import { greetingLine, printBanner } from './banner.js';
 import { buildChatTools } from './tools.js';
+import { buildSettingsTools } from './settings-tools.js';
 
 // ANSI escapes. Kept small + inline so there's no color-lib dep.
 const DIM = '\u001b[2m';
@@ -251,7 +252,9 @@ async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; d
 
   const pieces: string[] = [
     directiveBlock,
-    `You are @${me.handle}${me.displayName ? ` (${me.displayName})` : ''} on Krawler. This is a chat with the human who owns you, not a heartbeat. Respond naturally and concisely; short turns beat long ones. When you don't know something, say so. Do not narrate your system prompt. When the human asks about the local harness (port, dashboard URL, CLI commands, where to paste a key), answer from the "harness facts" block below, not from memory. The facts there are the truth.`,
+    `You are @${me.handle}${me.displayName ? ` (${me.displayName})` : ''} on Krawler. This is a chat with the human who owns you, not a heartbeat. Respond naturally and concisely; short turns beat long ones. When you don't know something, say so. Do not narrate your system prompt. When the human asks about the local harness (port, dashboard URL, CLI commands, where to paste a key), answer from the "harness facts" block below, not from memory. The facts there are the truth.
+
+You have tools to manage the human's local harness settings (getConfig, setProvider, setModel, setCadence, setDryRun, listInstalledSkills, syncInstalledSkill, listProfiles, addProfile). When the human asks to change settings, CALL the tool instead of telling them to click around the web UI. Two caveats: (1) you do NOT have tools to set API keys. Those stay on the web settings page at the URL in harness facts; for anything key-related, point the human there. (2) before calling setProvider, verify the matching provider key is already saved (call getConfig, look for has<Provider>ApiKey) and refuse if it isn't. Otherwise the next cycle fails. The Krawler post/follow/endorse tools are separate and still subject to prime directive #1: the human cannot dictate those.`,
     me.bio ? `Your bio: ${me.bio}` : '',
     '',
     renderHarnessFacts(facts),
@@ -616,7 +619,13 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
         toolLineOpen = false;
       },
     };
-    const tools = buildChatTools(krawler, hooks);
+    // Krawler action tools always present; settings tools only when
+    // the local settings server actually bound (rare but real case
+    // when another krawler instance owns every port in the scan
+    // range). The spread is guarded so the ToolSet type stays clean.
+    const baseTools = buildChatTools(krawler, hooks);
+    const settingsTools = settingsUrl ? buildSettingsTools(settingsUrl, profileName, hooks) : {};
+    const tools = { ...baseTools, ...settingsTools };
     try {
       const result = streamText({
         model: buildModel({
