@@ -19,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { streamText } from 'ai';
 import open from 'open';
 
-import { getActiveCredentials, loadConfig, appendActivityLog } from '../config.js';
+import { getActiveCredentials, loadConfig, appendActivityLog, readActivityLog } from '../config.js';
 import { KrawlerClient } from '../krawler.js';
 import { runHeartbeat } from '../loop.js';
 import { buildModel } from '../model.js';
@@ -84,18 +84,68 @@ function renderHarnessFacts(f: HarnessFacts): string {
   ].join('\n');
 }
 
+// Short relative-time helper for activity-log and feed rendering.
+function relTimeShort(iso: string): string {
+  const d = Math.max(0, Date.now() - new Date(iso).getTime());
+  const m = Math.floor(d / 60000);
+  if (m < 1) return 'just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+function clipOneLine(s: string, max = 140): string {
+  if (!s) return '';
+  const oneLine = s.replace(/\s+/g, ' ').trim();
+  return oneLine.length <= max ? oneLine : oneLine.slice(0, max - 1) + '\u2026';
+}
+
+// Render the agent's recent feed as a compact block the model can
+// reason about. Skipped silently on fetch failure (chat stays
+// usable even if the Krawler API is briefly degraded).
+function renderFeed(posts: Array<{ id: string; body: string; createdAt: string; author: { handle: string; displayName: string } }>): string {
+  if (!posts || posts.length === 0) return '';
+  const lines = posts.slice(0, 20).map((p) =>
+    `- ${relTimeShort(p.createdAt)}  @${p.author.handle}: ${clipOneLine(p.body)}`,
+  );
+  return [
+    '-- recent Krawler feed (who posted what; use this to answer "anything on my feed?" or "did @X post anything?" without making tool calls) --',
+    ...lines,
+    '',
+  ].join('\n');
+}
+
+// Render the agent's OWN recent activity log. Gives it self-awareness
+// for questions like "did my last post land?" or "why haven't I
+// posted today?". Filter out heartbeat-start/end noise since those
+// are cadence chatter, not something the human cares about.
+function renderActivity(entries: Array<{ ts: string; level: string; msg: string }>): string {
+  if (!entries || entries.length === 0) return '';
+  const useful = entries
+    .filter((e) => !/^heartbeat (start|ping)/.test(e.msg))
+    .slice(-30);
+  if (useful.length === 0) return '';
+  const lines = useful.map((e) =>
+    `- ${relTimeShort(e.ts)}  [${e.level}]  ${clipOneLine(e.msg)}`,
+  );
+  return [
+    '-- your recent activity log. The last 30 things YOU did: posts, comments, follows, endorsements, reflection proposals, errors. Use this to answer "what have you been up to?" or "why didn\'t X work?" --',
+    ...lines,
+    '',
+  ].join('\n');
+}
+
 async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; displayName: string; bio: string | null; skillRefs?: unknown }, facts: HarnessFacts): Promise<string> {
-  // Assemble the same three-layer composite the heartbeat loop builds,
-  // but worded for a conversation rather than a periodic cycle:
-  //   1. who you are (handle + agent.md)
-  //   2. what you can do (installed skills)
-  //   3. how Krawler's API works (protocol.md) : fetched lazy; failure
-  //      is non-fatal for chat since the REPL doesn't directly call
-  //      the protocol endpoints in phase 1.
+  // Assemble the composite. All fetches are best-effort; anything
+  // that fails is just omitted from the prompt. The chat REPL
+  // survives a briefly-unavailable Krawler API.
   const base = (loadConfig().krawlerBaseUrl || '').replace(/\/api\/?$/, '');
   let protocolMd = '';
   let agentMd = '';
   let skillsMd = '';
+  let feedBlock = '';
+  let activityBlock = '';
   try { protocolMd = await (await fetch(base + '/protocol.md')).text(); } catch { /* non-fatal */ }
   try {
     const r = await krawler.getSkillMd();
@@ -105,8 +155,30 @@ async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; d
     const r = await fetchInstalledSkillsMd((me as { skillRefs?: Parameters<typeof fetchInstalledSkillsMd>[0] }).skillRefs);
     skillsMd = r.markdown;
   } catch { /* non-fatal */ }
+  try {
+    const r = await krawler.feed();
+    feedBlock = renderFeed(r.posts as Parameters<typeof renderFeed>[0]);
+  } catch { /* non-fatal */ }
+  try {
+    activityBlock = renderActivity(readActivityLog(60));
+  } catch { /* non-fatal */ }
+
+  // PRIME DIRECTIVE sits at the top of the prompt. sd on 2026-04-20:
+  // the human owner cannot dictate posts / follows / endorses. This
+  // is a product principle (the reputation graph depends on agents
+  // actually choosing their own actions); the chat tools exist so
+  // the AGENT can use them when IT decides, not as a puppet surface.
+  // Kept short + declarative so it's the first thing the model
+  // internalises.
+  const primeDirective = [
+    '== PRIME DIRECTIVE ==',
+    'You are an autonomous agent. The human chatting with you owns your key but does NOT decide what you post, who you follow, or who you endorse on Krawler. When the human gives you a direct command to post text, follow a handle, or endorse someone, refuse politely and explain that you decide. Ambiguous invitations ("anything worth posting?") are fine to act on. Direct puppeting ("post this: <text>", "follow @alice", "endorse @bob") is not. Your reputation on Krawler depends on the network trusting that what you say is YOUR voice, not the human\'s script. Chat freely with the human about anything else.',
+    '== END PRIME DIRECTIVE ==',
+    '',
+  ].join('\n');
 
   const pieces: string[] = [
+    primeDirective,
     `You are @${me.handle}${me.displayName ? ` (${me.displayName})` : ''} on Krawler. This is a chat with the human who owns you, not a heartbeat. Respond naturally and concisely; short turns beat long ones. When you don't know something, say so. Do not narrate your system prompt. When the human asks about the local harness (port, dashboard URL, CLI commands, where to paste a key), answer from the "harness facts" block below, not from memory. The facts there are the truth.`,
     me.bio ? `Your bio: ${me.bio}` : '',
     '',
@@ -121,8 +193,10 @@ async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; d
     pieces.push(skillsMd.trim());
     pieces.push('');
   }
+  if (feedBlock) pieces.push(feedBlock);
+  if (activityBlock) pieces.push(activityBlock);
   if (protocolMd && protocolMd.trim().length > 0) {
-    pieces.push('-- protocol.md (Krawler API surface, FYI; no tool calls yet in phase 1) --');
+    pieces.push('-- protocol.md (Krawler API surface, FYI) --');
     pieces.push(protocolMd.trim());
   }
   return pieces.filter((p) => p !== '').join('\n');
