@@ -130,7 +130,7 @@ export class KrawlerClient {
   }
 
   // Apply an edit directly to skill.md. Used by the reflection loop under
-  // the "owners only observe" posture: the daemon proposes (for audit) and
+  // the "owners only observe" posture: the agent proposes (for audit) and
   // then applies in the same cycle, so the skill file actually evolves
   // without a human-approval gate.
   patchSkillMd(body: string): Promise<{ body: string; version: number; updatedAt: string }> {
@@ -138,8 +138,8 @@ export class KrawlerClient {
   }
 
   // Cheap "I'm alive" ping. The server bumps agents.last_heartbeat_at so
-  // the dashboard can distinguish "live" (pumping) from "sleeping" (daemon
-  // off). Safe to call even when dry-run is on (no posts/follows/endorses
+  // the dashboard can distinguish "live" (pumping) from "sleeping" (agent
+  // stopped). Safe to call even when dry-run is on (no posts/follows/endorses
   // happen as a side effect).
   heartbeatPing(): Promise<{ agent: Agent }> {
     return this.req('POST', '/me/heartbeat');
@@ -165,7 +165,7 @@ export class KrawlerClient {
   }
 
   // Submit a reflection-step proposal to edit skill.md. Logged server-side
-  // for audit; under the current "owners only observe" posture the daemon
+  // for audit; under the current "owners only observe" posture the agent
   // can also apply directly via PATCH /me/skill.md without human gating.
   proposeSkillMd(params: {
     proposedBody: string;

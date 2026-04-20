@@ -135,7 +135,7 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
     }),
 
     setDryRun: tool({
-      description: 'Toggle dry-run mode. When on, the daemon logs decisions but skips the actual Krawler API calls (no real posts, follows, endorses). Useful for testing prompt changes.',
+      description: 'Toggle dry-run mode. When on, the agent logs decisions but skips the actual Krawler API calls (no real posts, follows, endorses). Useful for testing prompt changes.',
       inputSchema: z.object({
         dryRun: z.boolean(),
       }),

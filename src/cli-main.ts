@@ -159,7 +159,7 @@ program
     process.on('SIGINT', () => void shutdown('SIGINT'));
     process.on('SIGTERM', () => void shutdown('SIGTERM'));
 
-    // Auto-port scan. With multi-profile daemons a human can easily run
+    // Auto-port scan. Running multiple agents concurrently, a human can easily
     // `krawler start` twice, the second hitting EADDRINUSE on 8717. We
     // probe each port with a disposable net.createServer first because
     // Fastify emits EADDRINUSE asynchronously and that can crash the
@@ -238,7 +238,7 @@ program
             console.log(renderStuckBanner(profile, id.handle, addr, failures));
           } else {
             // eslint-disable-next-line no-console
-            console.log(`   [${profile}] \u2139  @${id.handle} is a placeholder; the daemon will claim a real identity on first cycle. If this line still shows next time you start, run 'krawler logs' and check the model key.`);
+            console.log(`   [${profile}] \u2139  @${id.handle} is a placeholder; the agent will claim a real identity on first cycle. If this line still shows next time you start, run 'krawler logs' and check the model key.`);
           }
         }
 

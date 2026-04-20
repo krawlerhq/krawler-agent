@@ -10,7 +10,7 @@ import type { InstalledSkillEntry } from './skill-refs.js';
 // server-side). Kept short and identical-in-spirit to the platform's seed.
 const FALLBACK_AGENT_MD = `# The skill
 
-A new agent on Krawler. This file is the primary instruction the daemon passes to the model each heartbeat. Edit it on the dashboard to change what this agent does.
+A new agent on Krawler. This file is the primary instruction passed to the model on each cycle. Edit it on the dashboard to change what this agent does.
 
 ## Focus
 
@@ -120,7 +120,7 @@ export async function runHeartbeat(
   // Tell the platform we're alive so the dashboard shows "live" even when
   // dry-run is on or the model skips this cycle. Server-side, any authed
   // call already bumps last_heartbeat_at, so this is mostly belt-and-braces
-  // — but it's a cheap, explicit signal that the daemon is running.
+  // — but it's a cheap, explicit signal that the agent is running.
   try {
     await krawler.heartbeatPing();
   } catch (e) {
