@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { Command } from 'commander';
 import open from 'open';
 
-import { getActiveCredentials, getConfigPath, loadConfig, readActivityLog, redactConfig } from './config.js';
+import { getActiveCredentials, getConfigPath, loadConfig, loadPairToken, readActivityLog, redactConfig, savePairToken } from './config.js';
 import { DEFAULT_PROFILE, currentProfileName, listProfiles, withProfile } from './profile-context.js';
 import { buildServer } from './server.js';
 import { postNow, runHeartbeat, scheduleNext, stopSchedule } from './loop.js';
@@ -101,6 +101,8 @@ function renderStuckBanner(
 
 // Check with krawler.com that this key resolves to an agent. Returns the
 // agent record on success, or a reason string on failure. Never throws.
+// Uses meWithAutoRotate so a 401 on a previously-valid key triggers a
+// silent key rotation via the stored pair token before failing out.
 async function resolveIdentity(): Promise<
   | { ok: true; handle: string; displayName: string; placeholder: boolean }
   | { ok: false; reason: string }
@@ -108,7 +110,9 @@ async function resolveIdentity(): Promise<
   const config = loadConfig();
   if (!config.krawlerApiKey) return { ok: false, reason: 'no-key' };
   try {
-    const { agent } = await new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey).me();
+    const { meWithAutoRotate } = await import('./auto-rotate.js');
+    const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
+    const { agent } = await meWithAutoRotate(client);
     return {
       ok: true,
       handle: agent.handle,
@@ -341,6 +345,123 @@ program
       // eslint-disable-next-line no-console
       console.log(`[${e.ts}] ${e.level.padEnd(5)} ${e.msg}`);
     }
+  });
+
+// `krawler link` mints a pair token the local runtime uses to rotate its own
+// Krawler API key on 401 — no more copy-pasting a fresh key from the browser
+// whenever the stored one expires or gets revoked. The flow:
+//   1. POST /pair/init → get a short nonce + relative pair URL
+//   2. Print the absolute URL (krawlerBaseUrl minus /api, plus the pair path)
+//      and try to open it in the human's default browser
+//   3. Poll /pair/:nonce/poll every 2s. On status=confirmed, save the raw
+//      token to ~/.config/krawler-agent/<profile>/pair-token.json (0600)
+//   4. On status=expired / already-claimed / unknown, exit with a message
+//      instructing the human to re-run this command
+program
+  .command('link')
+  .description('Link this install with one of your agents on krawler.com. After linking, the agent can rotate its own API key on 401 without a human paste.')
+  .option('--no-open', 'do not auto-open the pair URL in a browser')
+  .action(async (opts: { open?: boolean }) => {
+    const config = loadConfig();
+    if (!config.krawlerBaseUrl) {
+      // eslint-disable-next-line no-console
+      console.error('no krawlerBaseUrl configured');
+      process.exit(1);
+    }
+    const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey ?? '');
+
+    let init: { nonce: string; pairPath: string; expiresAt: string };
+    try {
+      init = await client.pairInit();
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(`pair init failed: ${(e as Error).message}`);
+      process.exit(1);
+    }
+
+    // krawlerBaseUrl ends in /api; the pair page is served off the bare
+    // origin (krawler.com/pair/<nonce>, NOT krawler.com/api/pair/<nonce>).
+    const origin = config.krawlerBaseUrl.replace(/\/api\/?$/, '');
+    const pairUrl = origin + init.pairPath;
+
+    // eslint-disable-next-line no-console
+    console.log(`🕸️  Krawler Agent pair  ·  profile "${currentProfileName()}"`);
+    // eslint-disable-next-line no-console
+    console.log(`\n  Open this URL in your browser and pick an agent:`);
+    // eslint-disable-next-line no-console
+    console.log(`\n    ${pairUrl}\n`);
+    // eslint-disable-next-line no-console
+    console.log(`  (expires ${new Date(init.expiresAt).toLocaleTimeString()} — re-run if you miss it)\n`);
+
+    if (opts.open !== false) {
+      try { await open(pairUrl); } catch { /* silent */ }
+    }
+
+    // Poll every 2s until confirmed / expired.
+    // eslint-disable-next-line no-console
+    process.stdout.write('  waiting');
+    let ticks = 0;
+    const iv = setInterval(() => { process.stdout.write('.'); ticks++; }, 2000);
+    const stop = (code: number) => { clearInterval(iv); process.stdout.write('\n'); process.exit(code); };
+
+    try {
+      while (true) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const result = await client.pairPoll(init.nonce);
+        if (result.status === 'pending') {
+          if (ticks > 150) {
+            // eslint-disable-next-line no-console
+            console.log(`\n\n  pair URL has probably expired — re-run \`krawler link\` to get a fresh one.`);
+            stop(1);
+          }
+          continue;
+        }
+        if (result.status === 'confirmed') {
+          const { pairToken, agent, expiresAt } = result;
+          savePairToken({
+            token: pairToken,
+            agentId: agent?.id ?? '',
+            handle: agent?.handle ?? '',
+            pairedAt: new Date().toISOString(),
+            expiresAt,
+          });
+          // eslint-disable-next-line no-console
+          console.log(`\n\n  \u2713 paired with @${agent?.handle ?? '?'}`);
+          // eslint-disable-next-line no-console
+          console.log(`  token saved to ~/.config/krawler-agent${currentProfileName() === DEFAULT_PROFILE ? '' : `/profiles/${currentProfileName()}`}/pair-token.json`);
+          // eslint-disable-next-line no-console
+          console.log(`  this install can now rotate its own Krawler key on 401 until ${new Date(expiresAt).toLocaleDateString()}.`);
+          stop(0);
+        }
+        // Any other status → fatal, print and exit.
+        // eslint-disable-next-line no-console
+        console.log(`\n\n  pair failed: ${result.status}. re-run \`krawler link\` to try again.`);
+        stop(1);
+      }
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(`\n  poll error: ${(e as Error).message}`);
+      stop(1);
+    }
+  });
+
+// `krawler unlink` wipes the stored pair token for this profile. The pair
+// row on krawler.com stays behind (revokable from the dashboard later);
+// this just disconnects this local install from it.
+program
+  .command('unlink')
+  .description('Remove the pair token from this install. Does not revoke the pair on krawler.com.')
+  .action(async () => {
+    const existing = loadPairToken();
+    if (!existing) {
+      // eslint-disable-next-line no-console
+      console.log('no pair token on this install.');
+      process.exit(0);
+    }
+    const { clearPairToken } = await import('./config.js');
+    clearPairToken();
+    // eslint-disable-next-line no-console
+    console.log(`unpaired (was @${existing.handle}).`);
   });
 
 registerPlaybookCommands(program);

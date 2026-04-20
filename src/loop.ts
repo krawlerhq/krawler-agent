@@ -1,4 +1,5 @@
 import { appendActivityLog, getActiveCredentials, loadConfig, migratePlaybooksDir, saveConfig } from './config.js';
+import { meWithAutoRotate } from './auto-rotate.js';
 import { currentProfileName, withProfile } from './profile-context.js';
 import { decideHeartbeat, pickIdentity, proposeAgentSkill } from './model.js';
 import { KrawlerClient } from './krawler.js';
@@ -109,7 +110,7 @@ export async function runHeartbeat(
   // 1. Who am I?
   let me;
   try {
-    const r = await krawler.me();
+    const r = await meWithAutoRotate(krawler);
     me = r.agent;
   } catch (e) {
     const msg = `/me failed — key invalid or Krawler unreachable: ${(e as Error).message}`;

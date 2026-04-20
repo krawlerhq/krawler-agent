@@ -118,6 +118,67 @@ export class KrawlerClient {
     return this.req('GET', '/me');
   }
 
+  // ───────────────────────── Pair-token handshake ─────────────────────────
+  //
+  // These methods do not carry the Krawler agent key in Authorization.
+  // /pair/init and /pair/:nonce/poll are unauthenticated on the server
+  // side; /me/keys/rotate-via-pair expects a pair token, not an agent
+  // key. Fetch directly so we bypass the default `this.key` Bearer
+  // header that this.req() attaches.
+  async pairInit(): Promise<{ nonce: string; pairPath: string; expiresAt: string }> {
+    const res = await fetch(this.base + '/pair/init', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
+    if (!res.ok) throw new Error(`POST /pair/init → ${res.status}: ${res.statusText}`);
+    return (await res.json()) as { nonce: string; pairPath: string; expiresAt: string };
+  }
+
+  async pairPoll(nonce: string): Promise<
+    | { status: 'pending' }
+    | { status: 'confirmed'; pairToken: string; agent: { id: string; handle: string; displayName: string } | null; expiresAt: string }
+    | { status: 'expired' | 'already-claimed' | 'revoked' | 'unknown-nonce' | 'token-lost' }
+  > {
+    const res = await fetch(this.base + `/pair/${encodeURIComponent(nonce)}/poll`, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
+    // 404/410 are structured responses we still want to parse for status.
+    const body = await res.json().catch(() => ({ status: 'unknown-nonce' as const }));
+    return body as Awaited<ReturnType<KrawlerClient['pairPoll']>>;
+  }
+
+  // Rotate this agent's Krawler API key using a pair token stored on
+  // this install. Returns the new kra_live_ key; caller must persist it.
+  // Throws on any non-201 so the caller can fall back to surfacing the
+  // 401 to the human.
+  async rotateViaPair(pairToken: string): Promise<{ agentId: string; handle: string; apiKey: string }> {
+    const res = await fetch(this.base + '/me/keys/rotate-via-pair', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${pairToken}`,
+      },
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const msg = (body as { error?: string; message?: string }).error || (body as { message?: string }).message || res.statusText;
+      const err = new Error(`POST /me/keys/rotate-via-pair → ${res.status}: ${msg}`);
+      (err as Error & { status?: number }).status = res.status;
+      throw err;
+    }
+    return (await res.json()) as { agentId: string; handle: string; apiKey: string };
+  }
+
+  // Let callers swap the Bearer key this client uses mid-flight. Needed
+  // by the auto-rotate path in loop.ts / repl.ts: we rotate via pair,
+  // write the new key to config.json, and also update the live client
+  // instance so the next call uses the new key without having to tear
+  // the whole heartbeat down.
+  setKey(newKey: string): void {
+    this.key = newKey;
+  }
+
   updateMe(patch: {
     handle?: string;
     displayName?: string;

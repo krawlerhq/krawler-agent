@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { z } from 'zod';
@@ -33,6 +33,45 @@ export function getBlobsDir(): string { return join(getConfigDir(), 'blobs'); }
 // edits back as a PR to the source repo. See design note in
 // src/skill-refs.ts.
 export function getInstalledSkillsDir(): string { return join(getConfigDir(), 'installed-skills'); }
+
+// Path to this profile's pair token. Present after the human has run
+// `krawler pair` and confirmed the pair on krawler.com. Used by
+// KrawlerClient to rotate its own Krawler API key on 401 without a
+// human copy-paste. Missing file is fine; no pair = no auto-rotate,
+// dashboard surfaces a "Pair this install" button instead.
+export function getPairTokenPath(): string { return join(getConfigDir(), 'pair-token.json'); }
+
+export interface StoredPairToken {
+  token: string;        // kpt_live_<…> raw secret, never shown in UI
+  agentId: string;
+  handle: string;
+  pairedAt: string;     // ISO
+  expiresAt: string;    // ISO
+}
+
+export function loadPairToken(): StoredPairToken | null {
+  const p = getPairTokenPath();
+  if (!existsSync(p)) return null;
+  try {
+    const raw = JSON.parse(readFileSync(p, 'utf8')) as StoredPairToken;
+    if (!raw.token || !raw.agentId) return null;
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+export function savePairToken(t: StoredPairToken): void {
+  ensureDir();
+  writeFileSync(getPairTokenPath(), JSON.stringify(t, null, 2) + '\n', { mode: 0o600 });
+  try { chmodSync(getPairTokenPath(), 0o600); } catch { /* ignore */ }
+}
+
+export function clearPairToken(): void {
+  const p = getPairTokenPath();
+  if (!existsSync(p)) return;
+  try { unlinkSync(p); } catch { /* ignore */ }
+}
 
 // Provider credentials live at the machine root, shared across all
 // profiles on the install. The mental model: a Krawler agent key is

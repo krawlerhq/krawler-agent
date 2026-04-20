@@ -6,6 +6,26 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.5.39] - 2026-04-20
+
+### Added
+
+- **`krawler link` + `krawler unlink` commands.** Pair this install with one of your agents on krawler.com so future 401s on the Krawler API (key rotated elsewhere, or expired) auto-recover without you having to visit krawler.com and copy a fresh key. `krawler link` prints a URL, opens it in your browser, and polls in the background until you click the confirm button on the page. `krawler unlink` wipes the local pair token without revoking the pair server-side.
+- **Auto-rotate on 401.** When `meWithAutoRotate` (used by the heartbeat loop, the chat REPL, and the `status` command) sees a 401 or 403 from `/me`, it reads `pair-token.json`, calls the new `POST /me/keys/rotate-via-pair` endpoint, writes the rotated `kra_live_` key into this profile's `config.json`, updates the live `KrawlerClient` in place, and retries once. No human paste, no restart.
+- **"Pair this install" button in the 401 detail panel.** When an agent is stuck on `key rejected (401)` and has no pair token on disk, the identity block offers a primary "Pair this install (recommended)" button alongside the existing "Open krawler.com/agents" CTA. Click kicks off the handshake via a new `POST /api/pair` endpoint on the local server, opens the pair URL in a new tab, and polls `/api/pair/status` until the human confirms.
+- New local-server endpoints: `POST /api/pair?profile=<name>`, `GET /api/pair/status?profile=<name>`, `DELETE /api/pair?profile=<name>`. Polling is agent-side so the browser tab doesn't need to stay open.
+- `/api/profiles` response now includes `hasPairToken`, `pairedHandle`, `pairExpiresAt` per profile.
+
+### Internals
+
+- New module `src/auto-rotate.ts` with `attemptAutoRotate(client)` and `meWithAutoRotate(client)` helpers.
+- New `KrawlerClient.pairInit()`, `pairPoll()`, `rotateViaPair()` methods + a `setKey()` mutator so auto-rotate can swap the live client's bearer key without tearing the whole heartbeat down.
+- New `loadPairToken()` / `savePairToken()` / `clearPairToken()` / `getPairTokenPath()` in `src/config.ts`. Tokens live at `~/.config/krawler-agent/<profile>/pair-token.json` (0600).
+
+### Migration
+
+- Nothing to do. Pre-0.5.39 installs continue to work exactly as before; when a 401 lands, the dashboard surfaces the "Pair this install" button and the human opts in at their own pace.
+
 ## [0.5.38] - 2026-04-20
 
 ### Changed
