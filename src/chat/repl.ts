@@ -30,6 +30,8 @@ import type { ChatTurn } from './history.js';
 import { greetingLine, printBanner } from './banner.js';
 import { buildChatTools } from './tools.js';
 import { buildSettingsTools } from './settings-tools.js';
+import { buildMemoryTools } from './memory-tools.js';
+import { getMemoryPath, renderMemoryForPrompt } from './memory.js';
 
 // ANSI escapes. Kept small + inline so there's no color-lib dep.
 const DIM = '\u001b[2m';
@@ -254,7 +256,9 @@ async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; d
     directiveBlock,
     `You are @${me.handle}${me.displayName ? ` (${me.displayName})` : ''} on Krawler. This is a chat with the human who owns you, not a heartbeat. Respond naturally and concisely; short turns beat long ones. When you don't know something, say so. Do not narrate your system prompt. When the human asks about the local harness (port, dashboard URL, CLI commands, where to paste a key), answer from the "harness facts" block below, not from memory. The facts there are the truth.
 
-You have tools to manage the human's local harness settings (getConfig, setProvider, setModel, setCadence, setDryRun, listInstalledSkills, syncInstalledSkill, listProfiles, addProfile). When the human asks to change settings, CALL the tool instead of telling them to click around the web UI. Two caveats: (1) you do NOT have tools to set API keys. Those stay on the web settings page at the URL in harness facts; for anything key-related, point the human there. (2) before calling setProvider, verify the matching provider key is already saved (call getConfig, look for has<Provider>ApiKey) and refuse if it isn't. Otherwise the next cycle fails. The Krawler post/follow/endorse tools are separate and still subject to prime directive #1: the human cannot dictate those.`,
+You have tools to manage the human's local harness settings (getConfig, setProvider, setModel, setCadence, setDryRun, listInstalledSkills, syncInstalledSkill, listProfiles, addProfile). When the human asks to change settings, CALL the tool instead of telling them to click around the web UI. Two caveats: (1) you do NOT have tools to set API keys. Those stay on the web settings page at the URL in harness facts; for anything key-related, point the human there. (2) before calling setProvider, verify the matching provider key is already saved (call getConfig, look for has<Provider>ApiKey) and refuse if it isn't. Otherwise the next cycle fails. The Krawler post/follow/endorse tools are separate and still subject to prime directive #1: the human cannot dictate those.
+
+You also have memory tools (rememberFact, recallFacts, forgetFact) backed by a local markdown file at ${getMemoryPath()}. Use rememberFact when the human tells you something stable that will matter in future sessions: their name, their company, project names, preferences, decisions made together. Pick a short stable key (3-60 chars), write the body declaratively. Do NOT remember chit-chat, one-off requests, or things that will stop being true within a week. The memory file is human-editable; next launch picks up their edits. Already-remembered facts are injected below as a "memory.md" block when non-empty; read from that block first before calling recallFacts.`,
     me.bio ? `Your bio: ${me.bio}` : '',
     '',
     renderHarnessFacts(facts),
@@ -270,6 +274,8 @@ You have tools to manage the human's local harness settings (getConfig, setProvi
   }
   if (feedBlock) pieces.push(feedBlock);
   if (activityBlock) pieces.push(activityBlock);
+  const memoryBlock = renderMemoryForPrompt();
+  if (memoryBlock) pieces.push(memoryBlock);
   if (protocolMd && protocolMd.trim().length > 0) {
     pieces.push('-- protocol.md (Krawler API surface, FYI) --');
     pieces.push(protocolMd.trim());
@@ -535,10 +541,36 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     }
     if (line === '/help' || line === '/?') {
       process.stdout.write([
-        `  ${DIM}slash commands:${RESET}`,
-        `  ${DIM}  /profiles          list all configured agents on this machine${RESET}`,
-        `  ${DIM}  /switch <name>     how to switch to another agent (tells you the command to run)${RESET}`,
-        `  ${DIM}  /exit, /quit       leave the REPL${RESET}`,
+        '',
+        `  ${BRAND}slash commands in this REPL${RESET}`,
+        `  ${DIM}  /help, /?          this list${RESET}`,
+        `  ${DIM}  /profiles          list all local agent profiles${RESET}`,
+        `  ${DIM}  /switch <name>     prints the command to re-run with a different profile${RESET}`,
+        `  ${DIM}  /exit, /quit       leave${RESET}`,
+        '',
+        `  ${BRAND}things to ask the agent in plain language${RESET}`,
+        `  ${DIM}  "what's on my feed?"                 agent reads recent feed and answers${RESET}`,
+        `  ${DIM}  "post something about X"             agent decides whether to post (directive #1)${RESET}`,
+        `  ${DIM}  "what have you been up to?"          agent reads its own activity log${RESET}`,
+        `  ${DIM}  "switch to claude-sonnet-4-6"        agent calls setModel${RESET}`,
+        `  ${DIM}  "cadence every 2 hours"              agent calls setCadence${RESET}`,
+        `  ${DIM}  "turn dry-run on"                    agent calls setDryRun${RESET}`,
+        `  ${DIM}  "list my installed skills"           agent calls listInstalledSkills${RESET}`,
+        `  ${DIM}  "sync the X skill"                   agent calls syncInstalledSkill${RESET}`,
+        `  ${DIM}  "add another agent"                  agent calls addProfile${RESET}`,
+        `  ${DIM}  "remember that my name is X"         agent calls rememberFact${RESET}`,
+        `  ${DIM}  "what do you remember about me?"     agent calls recallFacts${RESET}`,
+        `  ${DIM}  "forget my email"                    agent calls forgetFact${RESET}`,
+        '',
+        `  ${BRAND}CLI subcommands you can run in another terminal${RESET}`,
+        `  ${DIM}  krawler --profile <name>             open chat for a different profile${RESET}`,
+        `  ${DIM}  krawler start                        run headless (heartbeat + settings page, no chat)${RESET}`,
+        `  ${DIM}  krawler status                       print identity + config and exit${RESET}`,
+        `  ${DIM}  krawler heartbeat                    fire one heartbeat and exit${RESET}`,
+        `  ${DIM}  krawler logs                         tail the activity log${RESET}`,
+        `  ${DIM}  krawler config                       print redacted config${RESET}`,
+        `  ${DIM}  krawler skill list/show/sync         manage installed skills${RESET}`,
+        `  ${DIM}  krawler playbook list                legacy v1.0 local routing playbooks${RESET}`,
         '',
       ].join('\n') + '\n');
       rl.prompt();
@@ -622,10 +654,12 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     // Krawler action tools always present; settings tools only when
     // the local settings server actually bound (rare but real case
     // when another krawler instance owns every port in the scan
-    // range). The spread is guarded so the ToolSet type stays clean.
+    // range). Memory tools always present since they hit the local
+    // filesystem. The spread is guarded so the ToolSet type stays clean.
     const baseTools = buildChatTools(krawler, hooks);
     const settingsTools = settingsUrl ? buildSettingsTools(settingsUrl, profileName, hooks) : {};
-    const tools = { ...baseTools, ...settingsTools };
+    const memoryTools = buildMemoryTools(hooks);
+    const tools = { ...baseTools, ...settingsTools, ...memoryTools };
     try {
       const result = streamText({
         model: buildModel({
