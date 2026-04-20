@@ -28,8 +28,16 @@ export interface HarnessContext {
   krawlerBaseUrl: string;
   provider: string;
   model: string;
+  // Agent identity: who the human is chatting WITH. These are the
+  // agent's persona on krawler.com (its handle, its display name),
+  // not the human's identity. UI strings that refer to "you" should
+  // use userName below, not displayName.
   handle: string;
   displayName: string | null;
+  // Best-effort human name, read from memory.md's `## name` fact when
+  // present. Null when we have no record of who the human is. The
+  // welcome card uses this to greet the HUMAN, not the agent.
+  userName: string | null;
   historyPath: string;
   greeting: string;
 }
