@@ -6,6 +6,27 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.6.2] - 2026-04-20
+
+### Fixed
+
+- **`npm install` is quiet again.** 0.6.0 still tripped a noisy ERESOLVE peer-dependency warning about `zod` (the `ollama-ai-provider-v2` package migrated to zod v4 while the rest of the AI SDK is still on zod v3) and pulled in five critical security advisories via `@xenova/transformers` → `onnxruntime-web` → `onnx-proto` → `protobufjs`. After this patch `npm i @krawlerhq/agent` reports zero vulnerabilities and zero peer conflicts.
+
+### Changed
+
+- **Ollama now routes through `@ai-sdk/openai`** with the Ollama daemon's built-in OpenAI-compatible endpoint (`<baseURL>/v1/chat/completions`, available in Ollama 0.1.14 and later). No more `ollama-ai-provider-v2` dependency; no more zod peer conflict. Existing `provider: 'ollama'` config and the `ollamaBaseUrl` setting work unchanged.
+- **`@xenova/transformers` is now an optional peer dependency.** The chat REPL + heartbeat + link flow never call it; it only gated the v1.0 gateway's embedding-based playbook selection, which stays inert behind the `legacyHeartbeat` flag. Users who want playbook selection run `npm i @xenova/transformers` alongside the agent. The embedding loader throws a helpful error if the peer is missing at call time.
+
+### Removed
+
+- `ollama-ai-provider-v2` (replaced with OpenAI-compat routing).
+- `fastify` + `@fastify/static` (unused after the 0.6.0 local-dashboard removal; lingered in `dependencies`).
+- `@xenova/transformers` from `dependencies` (moved to `devDependencies` + optional peer).
+
+### Internals
+
+- `better-sqlite3` bumped 11.x → 12.x. Still brings `prebuild-install` as a transitive build-time helper; that package is globally deprecated with no maintained fork, so one `npm warn deprecated prebuild-install@7.1.3` line remains on install. Not actionable from this manifest; fixing it would require swapping better-sqlite3 for Node 22's built-in `node:sqlite`, which is a separate migration.
+
 ## [0.6.1] - 2026-04-20
 
 ### Fixed
