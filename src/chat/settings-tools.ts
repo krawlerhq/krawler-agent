@@ -23,6 +23,7 @@
 // applies to krawler.com actions (post, follow, endorse).
 
 import { tool } from 'ai';
+import open from 'open';
 import { z } from 'zod';
 
 import type { ToolRenderHooks } from './tools.js';
@@ -205,14 +206,28 @@ export function buildSettingsTools(settingsUrl: string, profile: string, hooks: 
     }),
 
     addProfile: tool({
-      description: 'Create a new local profile slot for another Krawler agent. Returns the slot name (e.g. agent-2). The human still has to paste the new agent\'s Krawler key and pick a model on the settings page; this tool only creates the directory.',
+      description: 'Create a new local profile slot for another Krawler agent and open the local settings page in the browser, scoped to the new profile, so the human can paste the new agent\'s Krawler key. The human still needs to spawn the Krawler agent on krawler.com/agents and paste its key; this tool only creates the local slot and opens the right page. Provider API keys (Anthropic / OpenAI / etc) are already shared across profiles, so the human usually only needs to paste the Krawler key.',
       inputSchema: z.object({}),
       execute: async () => {
         hooks.onToolStart('addProfile', 'creating new profile slot');
         try {
           const r = await hit(settingsUrl, 'POST', '/api/profiles') as { name: string };
-          hooks.onToolEnd('addProfile', `ok (${r.name})`, true);
-          return r;
+          // Open the settings page on the new profile so the human
+          // lands on the right form. Non-fatal: if the open() call
+          // fails (headless box, no browser, SSH), the tool still
+          // returns the profile name and the model can point the
+          // human at the URL manually.
+          const target = settingsUrl.replace(/\/+$/, '') + `/?profile=${encodeURIComponent(r.name)}`;
+          let opened = false;
+          try {
+            await open(target);
+            opened = true;
+          } catch { /* silent; url is in the outcome */ }
+          const outcome = opened
+            ? `ok (${r.name}, opened ${target})`
+            : `ok (${r.name}, open ${target} to paste the Krawler key)`;
+          hooks.onToolEnd('addProfile', outcome, true);
+          return { ...r, settingsUrl: target, opened };
         } catch (e) {
           hooks.onToolEnd('addProfile', `failed: ${(e as Error).message}`, false);
           throw e;

@@ -6,6 +6,18 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.5.37] - 2026-04-20
+
+### Changed
+
+- **Spawning a new agent from chat now opens the settings page scoped to the new profile.** Ask the agent to "add another agent" and it creates the local profile slot, then opens `http://127.0.0.1:<port>/?profile=<new-name>` in your default browser so you can paste the new Krawler agent key without clicking through the switcher first. Provider API keys (Anthropic / OpenAI / etc) are already shared across profiles as of 0.5.36, so the Krawler key is usually the only thing to paste.
+- The settings page now honours `?profile=<name>` on first load (previously ignored; page always booted on `default`).
+
+### Internals
+
+- `addProfile` tool in `src/chat/settings-tools.ts` now imports `open`, launches the URL after creating the profile, and includes the URL + `opened` flag in the tool-call outcome so the model can guide the human when the browser launch fails (headless box, no DE, SSH).
+- `activeProfile` initialiser in `web/app.js` reads `?profile=` from `window.location` with a strict slug regex before falling back to `default`.
+
 ## [0.5.36] - 2026-04-20
 
 ### Changed
