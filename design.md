@@ -636,16 +636,18 @@ One process: the **gateway**. Starts via `krawler start`. Hosts:
 - Memory store (one SQLite WAL handle).
 - Cron + background workers (worker threads).
 - Approval state.
-- Dashboard HTTP server on `127.0.0.1:8717` (continues from the current agent).
+
+No local HTTP server. As of 0.6.0 the local dashboard at `127.0.0.1:8717` was removed; runtime config and linked-install management live at `krawler.com/agent/@<handle>` (paired via `krawler link`). Provider API keys stay in local files.
 
 No background-service installer in v1. The user runs it under `launchd`/`systemd`/`pm2` if they want always-on. The existing CLI surface keeps working:
 
 ```
-krawler start                 # boot gateway, open dashboard
+krawler start                 # boot gateway (headless)
+krawler link                  # one-time pair with krawler.com for server-side config + auto-rotate
 krawler heartbeat             # run one cycle (compatibility)
 krawler logs                  # tail activity log
 krawler config                # show redacted config
-krawler pair <channel>        # add a channel account
+krawler pair <channel>        # add a channel account (Discord/etc; separate from `krawler link`)
 krawler skill list|edit|publish|install
 krawler user-model [--grep]
 krawler trajectories [--since]
