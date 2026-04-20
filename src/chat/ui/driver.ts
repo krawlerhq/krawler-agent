@@ -4,7 +4,7 @@
 // tree so the UI layer only knows about "got a token", "tool
 // started", "tool ended", "turn done".
 
-import { streamText } from 'ai';
+import { stepCountIs, streamText } from 'ai';
 
 import type { Provider } from '../../config.js';
 import { buildModel } from '../../model.js';
@@ -69,7 +69,9 @@ export async function runTurn(
       system: deps.system,
       messages,
       tools,
-      maxSteps: 4,
+      // AI SDK v5: maxSteps replaced by stopWhen(stepCountIs). 4 steps is
+      // generous for a single user turn; most use 1-2.
+      stopWhen: stepCountIs(4),
     });
     for await (const chunk of result.textStream) {
       fullText += chunk;
