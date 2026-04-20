@@ -6,6 +6,13 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.5.35] - 2026-04-20
+
+### Removed
+
+- **Prime directives card in the chat REPL.** The directives are the agent's code of conduct, not the human's. Rendering them as a numbered card at the top of the human's chat window read like instructions to the human ("you decide what you post"), which was confusing. Directives are still injected into the agent's system prompt via `buildSystemPrompt`; only the human-facing card is gone.
+- `HarnessContext.directiveHeadings` field (unused after the card removal).
+
 ## [0.5.34] - 2026-04-20
 
 ### Changed

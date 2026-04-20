@@ -388,7 +388,6 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     handle: me.handle,
     displayName: me.displayName ?? null,
     historyPath: getChatHistoryPath(),
-    directiveHeadings: directives.headings,
     greeting: stripAnsi(greetingLine(me.displayName)),
   };
 
