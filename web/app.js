@@ -765,15 +765,39 @@ function renderDetailIdentity(p) {
     const m = p.meError ?? '';
     const code = m.match(/→\s*(\d{3})/)?.[1];
     let advice = '';
-    // On 401/403/404, the fix almost always requires the user to grab a
-    // different key from krawler.com. Surface a big one-click deep link
-    // to the agents page so they don't have to hunt through menus —
-    // the user's complaint "why are you asking me to do extra work
-    // when you know where the fix is" is about exactly this.
+    // On 401/403/404, offer a one-click recovery. Two CTAs in priority order:
+    //   1. "Pair this install" — the permanent fix. Once the profile has a
+    //      pair token on disk, future 401s auto-rotate without any human
+    //      interaction. We present this first because it ends the class of
+    //      problem, not just this instance.
+    //   2. "Open krawler.com/agents" — the manual fallback. Still useful
+    //      for 404 (agent was deleted; no amount of rotating helps).
+    //
+    // If the profile already HAS a pair token and we're still seeing this
+    // banner, it means meWithAutoRotate's rotate attempt also failed —
+    // the token is probably expired or revoked. Tell the human that
+    // re-pairing is the fix.
     let ctaHtml = '';
     if (code === '401' || code === '403') {
-      advice = 'The Krawler API rejected this agent key. The key is wrong, expired, or was rotated. Grab the current key from krawler.com and paste it into the <strong>Krawler agent key</strong> block.';
-      ctaHtml = `<a href="https://krawler.com/agents/" target="_blank" rel="noopener" style="display:inline-block;margin:10px 0 0;padding:8px 16px;background:var(--brand);color:#fff;border-radius:9999px;font-weight:600;font-size:0.87rem;text-decoration:none;">Open krawler.com/agents ↗</a>`;
+      if (p.hasPairToken) {
+        advice = 'The Krawler API rejected this agent key AND the pair token failed to rotate it. The pair token is probably expired or was revoked on krawler.com. Re-pair to reset both.';
+        ctaHtml = `
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" class="secondary small" data-pair-start="${escapeAttr(p.name)}">Re-pair this install</button>
+            <a href="https://krawler.com/agents/" target="_blank" rel="noopener" style="padding:4px 10px;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border-2);border-radius:9999px;font-weight:500;text-decoration:none;font-size:0.78rem;">Open krawler.com/agents ↗</a>
+          </div>
+          <span id="pair-status-${escapeAttr(p.name)}" class="inline-status" style="margin-top:8px;display:block;"></span>
+        `;
+      } else {
+        advice = 'The Krawler API rejected this agent key. Pair this install once and future rejections rotate automatically. Or open the dashboard and paste a fresh key into the <strong>Krawler agent key</strong> block.';
+        ctaHtml = `
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button data-pair-start="${escapeAttr(p.name)}">Pair this install (recommended)</button>
+            <a href="https://krawler.com/agents/" target="_blank" rel="noopener" style="padding:8px 16px;background:var(--surface-2);color:var(--text-1);border:1px solid var(--border-2);border-radius:9999px;font-weight:600;text-decoration:none;font-size:0.87rem;">Open krawler.com/agents ↗</a>
+          </div>
+          <span id="pair-status-${escapeAttr(p.name)}" class="inline-status" style="margin-top:8px;display:block;"></span>
+        `;
+      }
     } else if (code === '404') {
       advice = 'This agent no longer exists on krawler.com (deleted, or this key belongs to a different environment). Click Disconnect in the Krawler agent key block, then spawn or pick a different agent on krawler.com.';
       ctaHtml = `<a href="https://krawler.com/agents/" target="_blank" rel="noopener" style="display:inline-block;margin:10px 0 0;padding:8px 16px;background:var(--brand);color:#fff;border-radius:9999px;font-weight:600;font-size:0.87rem;text-decoration:none;">Open krawler.com/agents ↗</a>`;
@@ -937,6 +961,12 @@ function wireAgentDetail(name) {
   q('[data-detail-retry]')?.addEventListener('click', async () => {
     try { await fetchProfileConfig(name); renderAgentsTable(); } catch (e) { alert(`Retry failed: ${e.message}`); }
   });
+  // Pair-this-install button. Starts the handshake via the local agent's
+  // /api/pair endpoint, opens the returned URL in a new tab, then polls
+  // /api/pair/status until the human confirms on krawler.com. On success
+  // the next /api/profiles poll flips hasPairToken=true and the 401
+  // banner disappears.
+  q(`[data-pair-start="${CSS.escape(name)}"]`)?.addEventListener('click', () => startPair(name));
 
   // Krawler key actions
   q('[data-krawler-save]')?.addEventListener('click', () => saveKrawlerKey(name));
@@ -1080,6 +1110,44 @@ async function saveRuntimePatch(name, patch) {
     renderAgentsTable();
   } catch (e) {
     setStatus(status, `error: ${e.message}`, 'err');
+  }
+}
+
+async function startPair(name) {
+  const status = $(`pair-status-${name}`);
+  setStatus(status, 'opening browser\u2026');
+  try {
+    const j = await api(`/api/pair?profile=${encodeURIComponent(name)}`, { method: 'POST' });
+    window.open(j.pairUrl, '_blank', 'noopener');
+    setStatus(status, 'waiting for you to confirm on krawler.com\u2026');
+
+    // Poll /api/pair/status until paired / failed / timeout.
+    const started = Date.now();
+    const poll = async () => {
+      if (Date.now() - started > 15 * 60 * 1000) {
+        setStatus(status, 'pair timed out. click Pair again to retry.', 'err');
+        return;
+      }
+      try {
+        const s = await api(`/api/pair/status?profile=${encodeURIComponent(name)}`);
+        if (s.status === 'paired') {
+          setStatus(status, `\u2713 paired with @${s.handle ?? '?'} \u2014 heartbeats can now self-recover`, 'ok');
+          await refreshAll();
+          return;
+        }
+        if (s.status === 'failed') {
+          setStatus(status, `pair failed: ${s.reason ?? 'unknown'}. click Pair again to retry.`, 'err');
+          return;
+        }
+      } catch (e) {
+        setStatus(status, `poll error: ${e.message}`, 'err');
+        return;
+      }
+      setTimeout(poll, 2000);
+    };
+    setTimeout(poll, 2000);
+  } catch (e) {
+    setStatus(status, `pair init failed: ${e.message}`, 'err');
   }
 }
 

@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { PROVIDERS, getInstalledSkillsDir, loadConfig, readActivityLog, redactConfig, saveConfig } from './config.js';
+import { PROVIDERS, clearPairToken, getInstalledSkillsDir, loadConfig, loadPairToken, readActivityLog, redactConfig, saveConfig, savePairToken } from './config.js';
 import type { Provider } from './config.js';
 import { validateKrawlerKey, validateProviderCredential } from './credentials.js';
 import { DEFAULT_PROFILE, PROFILE_ROOT, listProfiles, profileDir, withProfile } from './profile-context.js';
@@ -96,6 +96,7 @@ export async function buildServer() {
               config.provider === 'openrouter' ? config.openrouterApiKey :
               '',
             );
+        const pair = loadPairToken();
         const base = {
           name,
           provider: config.provider,
@@ -104,6 +105,9 @@ export async function buildServer() {
           dryRun: config.dryRun,
           lastHeartbeat: config.lastHeartbeat ?? null,
           hasModelCreds: creds,
+          hasPairToken: pair !== null,
+          pairedHandle: pair?.handle ?? null,
+          pairExpiresAt: pair?.expiresAt ?? null,
         };
         if (!hasKey) {
           return { ...base, hasKey: false, handle: null, displayName: null, avatarStyle: null, placeholder: false, meError: null };
@@ -262,6 +266,106 @@ export async function buildServer() {
     saveConfig({ ...config, krawlerApiKey: '' });
     return { profile: profileOf(req), config: redactConfig(loadConfig()) };
   }));
+
+  // Pair a profile with its agent on krawler.com so the runtime can
+  // rotate its own Krawler API key on 401 without a human paste. The
+  // dashboard calls /api/pair to start the handshake, opens the returned
+  // URL in a new tab, and polls /api/pair/status until the human
+  // confirms.  In-flight nonces are kept in a per-profile map that dies
+  // with the process — the human restarts pairing if the agent restarts
+  // mid-handshake.
+  //
+  // pendingPairs maps profile -> { nonce, startedAt, pollHandle }. We
+  // run the poll loop server-side so the browser tab doesn't have to
+  // stay open: the dashboard fires-and-forgets, /api/pair returns the
+  // URL for the user to open, and the agent process keeps polling in
+  // the background until confirmed.
+  const pendingPairs = new Map<string, { nonce: string; startedAt: number; status: 'pending' | 'paired' | 'failed'; reason?: string; handle?: string }>();
+
+  app.post('/api/pair', async (req, reply) => {
+    const profile = profileOf(req);
+    return withProfile(profile, async () => {
+      const config = loadConfig();
+      const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey ?? '');
+      try {
+        const init = await client.pairInit();
+        const origin = config.krawlerBaseUrl.replace(/\/api\/?$/, '');
+        const pairUrl = origin + init.pairPath;
+        pendingPairs.set(profile, { nonce: init.nonce, startedAt: Date.now(), status: 'pending' });
+
+        // Background poll loop: every 2s until confirmed / expired.
+        // Writes the pair token into this profile's dir on success.
+        void (async () => {
+          const startedAt = Date.now();
+          const MAX_MS = 15 * 60 * 1000; // matches server's 15-min init expiry
+          while (Date.now() - startedAt < MAX_MS) {
+            await new Promise((r) => setTimeout(r, 2000));
+            try {
+              const result = await client.pairPoll(init.nonce);
+              if (result.status === 'pending') continue;
+              if (result.status === 'confirmed') {
+                await withProfile(profile, async () => {
+                  savePairToken({
+                    token: result.pairToken,
+                    agentId: result.agent?.id ?? '',
+                    handle: result.agent?.handle ?? '',
+                    pairedAt: new Date().toISOString(),
+                    expiresAt: result.expiresAt,
+                  });
+                });
+                pendingPairs.set(profile, { nonce: init.nonce, startedAt: Date.now(), status: 'paired', handle: result.agent?.handle });
+                return;
+              }
+              pendingPairs.set(profile, { nonce: init.nonce, startedAt: Date.now(), status: 'failed', reason: result.status });
+              return;
+            } catch (e) {
+              // Transient poll error — log but keep trying until MAX_MS.
+              // eslint-disable-next-line no-console
+              console.warn(`[pair] poll error for profile ${profile}:`, (e as Error).message);
+            }
+          }
+          pendingPairs.set(profile, { nonce: init.nonce, startedAt: Date.now(), status: 'failed', reason: 'timeout' });
+        })();
+
+        return { nonce: init.nonce, pairUrl, expiresAt: init.expiresAt };
+      } catch (e) {
+        reply.code(502);
+        return { error: `pair init failed: ${(e as Error).message}` };
+      }
+    });
+  });
+
+  // Poll the status of an in-flight or completed pair handshake. Called
+  // by the dashboard every 2s after it kicked off /api/pair, so the
+  // "Pair this install" button can flip to a "Paired with @handle" pill
+  // the moment the human confirms on krawler.com.
+  app.get('/api/pair/status', async (req) => {
+    const profile = profileOf(req);
+    const pending = pendingPairs.get(profile);
+    return withProfile(profile, () => {
+      // Prefer the persisted token — if it's on disk, we're paired whether
+      // or not the in-memory map knows about it (e.g. after a process
+      // restart where the original pair request's map entry was lost).
+      const stored = loadPairToken();
+      if (stored) {
+        return { profile, status: 'paired', handle: stored.handle, expiresAt: stored.expiresAt };
+      }
+      if (!pending) return { profile, status: 'idle' };
+      return { profile, status: pending.status, reason: pending.reason ?? null, handle: pending.handle ?? null };
+    });
+  });
+
+  // Unpair: delete the local pair token. The pair row on krawler.com
+  // survives (revokable server-side in a future UI); this just cuts the
+  // local install free of it.
+  app.delete('/api/pair', async (req) => {
+    const profile = profileOf(req);
+    return withProfile(profile, () => {
+      clearPairToken();
+      pendingPairs.delete(profile);
+      return { profile, ok: true };
+    });
+  });
 
   // Fire one heartbeat for this profile now and return the summary. The
   // scheduler is untouched (next cycle still fires on its own timer);

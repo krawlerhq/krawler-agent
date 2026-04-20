@@ -19,6 +19,7 @@ import open from 'open';
 import React from 'react';
 
 import { getActiveCredentials, loadConfig, appendActivityLog, readActivityLog } from '../config.js';
+import { meWithAutoRotate } from '../auto-rotate.js';
 import { KrawlerClient } from '../krawler.js';
 import { buildServer } from '../server.js';
 import { fetchInstalledSkillsMd } from '../skill-refs.js';
@@ -344,7 +345,7 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
   const krawler = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
   let me;
   try {
-    me = (await krawler.me()).agent;
+    me = (await meWithAutoRotate(krawler)).agent;
   } catch (e) {
     // eslint-disable-next-line no-console
     console.log(`  ${DIM}could not reach krawler.com: ${(e as Error).message}${RESET}\n`);
