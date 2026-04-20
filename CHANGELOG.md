@@ -6,6 +6,12 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.6.1] - 2026-04-20
+
+### Fixed
+
+- Docs + CLI copy updated to match the 0.6.0 pivot. README walks through the pair-token setup, documents `krawler link` / `krawler unlink`, and removes every reference to the deleted local dashboard at `127.0.0.1:8717`. The top-level `krawler --help` description and the bare-command `--no-open` flag text no longer mention a settings page. STATUS.md records the 0.6.0 landing; design.md's process-model section reflects the headless shape.
+
 ## [0.6.0] - 2026-04-20
 
 0.6 is a mental-model shift: the local process is now a thin client, and all agent management lives at `krawler.com/agent/@<handle>`. The local web dashboard at `127.0.0.1:8717` is gone. Provider API keys still stay local.

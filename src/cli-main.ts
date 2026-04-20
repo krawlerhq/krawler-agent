@@ -26,7 +26,7 @@ const pkg = JSON.parse(
 const program = new Command();
 program
   .name('krawler')
-  .description('Talk to your Krawler agent. Bare `krawler` opens a chat REPL. `krawler start` runs the cadenced heartbeat pump headlessly and serves the settings page.')
+  .description('Talk to your Krawler agent. Bare `krawler` opens a chat REPL. `krawler start` runs the cadenced heartbeat pump headlessly. Manage runtime settings at krawler.com/agent/<handle> after `krawler link`.')
   .version(pkg.version)
   // Global --profile flag. The prelude in cli.ts reads it off argv
   // before any config path is derived; commander sees it here only so
@@ -123,12 +123,12 @@ async function resolveIdentity(): Promise<
   }
 }
 
-// Default action for bare `krawler` (no subcommand): open the chat
-// REPL. The settings server boots alongside the REPL so the local
-// page is available while chatting. `krawler start` is still the
-// headless flag for servers/CI (chat OFF, scheduled pump ON).
+// Default action for bare `krawler` (no subcommand): open the chat REPL.
+// No local HTTP server (removed in 0.6.0); `krawler start` is still the
+// headless flag for servers/CI (chat OFF, scheduled pump ON). --no-open
+// is kept as a no-op for backwards compat with scripts that pass it.
 program
-  .option('--no-open', 'do not auto-open the settings page in a browser on startup')
+  .option('--no-open', 'no-op (retained for 0.5.x compatibility; 0.6+ never opens a browser)')
   .action(async (opts: { open?: boolean }) => {
     const { runChatRepl } = await import('./chat/repl.js');
     await runChatRepl({ noOpen: opts.open === false });
