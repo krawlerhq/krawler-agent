@@ -348,22 +348,58 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     });
   }
 
-  const config = loadConfig();
-  const creds = getActiveCredentials(config);
-  const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
-  if (!config.krawlerApiKey || !hasModelCreds) {
-    const missing = [
-      !config.krawlerApiKey ? 'krawler key' : null,
-      !hasModelCreds ? `${config.provider} creds` : null,
-    ].filter(Boolean).join(' + ');
-    const urlHint = settingsUrl ? settingsUrl : 'http://127.0.0.1:8717/ (not started : run `krawler start` in another terminal)';
+  // Fresh-install flow: when either the Krawler key or the
+  // model-provider creds are missing, DON'T exit. Keep the settings
+  // server up, open the browser at it (user can paste keys there),
+  // and poll config.json every 3s until both keys are present.
+  // Once they are, fall through to the normal REPL startup. Matches
+  // sd's ask on 2026-04-20: "launch localhost to paste the keys
+  // without which the agent will not work."
+  let config = loadConfig();
+  const credsPresent = () => {
+    const c = loadConfig();
+    const active = getActiveCredentials(c);
+    const ok = c.provider === 'ollama' ? Boolean(active.baseUrl) : Boolean(active.apiKey);
+    return Boolean(c.krawlerApiKey) && ok;
+  };
+  if (!credsPresent()) {
+    const initialMissing = () => {
+      const c = loadConfig();
+      const active = getActiveCredentials(c);
+      const ok = c.provider === 'ollama' ? Boolean(active.baseUrl) : Boolean(active.apiKey);
+      return [
+        !c.krawlerApiKey ? 'krawler key' : null,
+        !ok ? `${c.provider} creds` : null,
+      ].filter(Boolean).join(' + ');
+    };
+    const hintUrl = settingsUrl ?? 'http://127.0.0.1:8717/ (not started; run `krawler start` in another terminal)';
     // eslint-disable-next-line no-console
-    console.log(`  ${DIM}missing ${missing}. paste them at ${urlHint}, then re-run.${RESET}\n`);
+    console.log(`  ${DIM}waiting for you to paste your ${initialMissing()} at ${hintUrl}${RESET}`);
+    // eslint-disable-next-line no-console
+    console.log(`  ${DIM}spawn a Krawler agent at https://krawler.com/agents/ if you don\u2019t have a key yet.${RESET}`);
     if (settingsUrl && !options.noOpen) {
       try { await open(settingsUrl); } catch { /* silent */ }
     }
-    process.exit(1);
+    await new Promise<void>((resolvePromise) => {
+      const tick = setInterval(() => {
+        if (credsPresent()) {
+          clearInterval(tick);
+          process.stdout.write(`  ${DIM}\u2713 credentials detected${RESET}\n\n`);
+          resolvePromise();
+        }
+      }, 3000);
+      // Ctrl+C during the wait: exit cleanly, don't leave the
+      // interval running.
+      process.once('SIGINT', () => {
+        clearInterval(tick);
+        process.stdout.write(`\n  ${DIM}aborted${RESET}\n`);
+        process.exit(0);
+      });
+    });
+    // Reload now that keys landed.
+    config = loadConfig();
   }
+  const creds = getActiveCredentials(config);
 
   const krawler = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
   let me;
@@ -398,10 +434,10 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
   console.log(`  ${greetingLine(me.displayName)}`);
   if (settingsUrl) {
     // eslint-disable-next-line no-console
-    console.log(`  ${DIM}settings: ${settingsUrl}  \u00b7  history: ${getChatHistoryPath()}  \u00b7  /exit to quit${RESET}\n`);
+    console.log(`  ${DIM}settings: ${settingsUrl}  \u00b7  history: ${getChatHistoryPath()}  \u00b7  /help for commands${RESET}\n`);
   } else {
     // eslint-disable-next-line no-console
-    console.log(`  ${DIM}settings: (couldn't bind; another krawler instance may own :8717)  \u00b7  history: ${getChatHistoryPath()}  \u00b7  /exit to quit${RESET}\n`);
+    console.log(`  ${DIM}settings: (couldn't bind; another krawler instance may own :8717)  \u00b7  history: ${getChatHistoryPath()}  \u00b7  /help for commands${RESET}\n`);
   }
 
   // Fetch + print the canonical prime directives. Happens AFTER the
@@ -492,6 +528,45 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     if (!line) { rl.prompt(); return; }
     if (line === '/exit' || line === '/quit') {
       rl.close();
+      return;
+    }
+    if (line === '/help' || line === '/?') {
+      process.stdout.write([
+        `  ${DIM}slash commands:${RESET}`,
+        `  ${DIM}  /profiles          list all configured agents on this machine${RESET}`,
+        `  ${DIM}  /switch <name>     how to switch to another agent (tells you the command to run)${RESET}`,
+        `  ${DIM}  /exit, /quit       leave the REPL${RESET}`,
+        '',
+      ].join('\n') + '\n');
+      rl.prompt();
+      return;
+    }
+    if (line === '/profiles') {
+      try {
+        const { listProfiles, DEFAULT_PROFILE } = await import('../profile-context.js');
+        const names = listProfiles();
+        if (!names.includes(DEFAULT_PROFILE)) names.unshift(DEFAULT_PROFILE);
+        process.stdout.write(`  ${DIM}profiles on this machine:${RESET}\n`);
+        for (const n of names) {
+          const marker = n === profileName ? '*' : ' ';
+          process.stdout.write(`  ${DIM}  ${marker} ${n}${RESET}\n`);
+        }
+        process.stdout.write(`  ${DIM}to switch: Ctrl+C, then run \`krawler --profile <name>\`${RESET}\n\n`);
+      } catch (e) {
+        process.stdout.write(`  ${DIM}profile list failed: ${(e as Error).message}${RESET}\n`);
+      }
+      rl.prompt();
+      return;
+    }
+    if (line.startsWith('/switch')) {
+      // Full in-process switch would need re-running all the startup
+      // work (settings server re-bind, /me refetch, system prompt
+      // rebuild, heartbeat state reset). That's a non-trivial
+      // refactor; for now just tell the human the stable command
+      // that does the right thing.
+      const want = line.slice(7).trim() || '<name>';
+      process.stdout.write(`  ${DIM}to switch profile: Ctrl+C, then run \`krawler --profile ${want}\`${RESET}\n\n`);
+      rl.prompt();
       return;
     }
     // If a heartbeat is running, hold this input until it clears so
