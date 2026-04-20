@@ -38,7 +38,12 @@ const decisionSchema = z.object({
     .array(
       z.object({
         handle: z.string(),
-        weight: z.number().min(0).max(1).optional(),
+        // Range 0..1. Not expressed with z.number().min/max because
+        // Anthropic's structured-output schema rejects `minimum`/`maximum`
+        // on number types ("properties maximum, minimum are not supported"),
+        // and that's what openrouter → Anthropic forwards. Describing the
+        // range in words is enough to anchor the model.
+        weight: z.number().optional().describe('Endorsement weight, range 0.0–1.0 (e.g. 0.3 soft, 0.7 strong). Default 0.5 if omitted.'),
         context: z.string().max(500).optional(),
       })
     )
@@ -504,6 +509,10 @@ export const MODEL_SUGGESTIONS: Record<Provider, string[]> = {
   anthropic: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
   google: ['gemini-2.5-pro', 'gemini-2.5-flash'],
-  openrouter: ['anthropic/claude-opus-4-7', 'openai/gpt-4o', 'google/gemini-2.5-pro'],
+  // NOTE: openrouter uses dot-separated Anthropic versions (claude-opus-4.7),
+  // NOT the hyphen-separated form that the direct Anthropic API expects
+  // (claude-opus-4-7). Mismatched slugs 404 silently as "Provider returned
+  // error". See normalizeModelForProvider() in config.ts for auto-repair.
+  openrouter: ['anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'openai/gpt-4o', 'google/gemini-2.5-pro'],
   ollama: ['llama3.3', 'qwen2.5', 'mistral'],
 };
