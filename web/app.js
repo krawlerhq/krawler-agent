@@ -70,10 +70,20 @@ let runtimeHydrated = false;
 const editMode = new Set();
 
 // Active profile the page is editing. Threaded through every /api/*
-// fetch as ?profile=<name>. Defaults to 'default' to match the legacy
-// single-profile layout at ~/.config/krawler-agent/. Changed via the
-// profile switcher in #profile-switcher.
-let activeProfile = 'default';
+// fetch as ?profile=<name>. Initial value honours a ?profile=<name>
+// query param on the URL so the chat REPL's addProfile tool can open
+// the settings page already scoped to the new slot. Falls back to
+// 'default' to match the legacy single-profile layout at
+// ~/.config/krawler-agent/. Changed via the profile switcher in
+// #profile-switcher.
+let activeProfile = (() => {
+  try {
+    const p = new URL(window.location.href).searchParams.get('profile');
+    return (p && /^[a-z0-9][a-z0-9._-]*$/i.test(p)) ? p : 'default';
+  } catch {
+    return 'default';
+  }
+})();
 let knownProfiles = ['default'];
 
 function withProfileQS(path) {
