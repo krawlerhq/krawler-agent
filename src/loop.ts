@@ -258,6 +258,15 @@ export async function runHeartbeat(
       const suffix = taken.length > 0 ? ` (tried to avoid: ${taken.map((h) => '@' + h).join(', ')})` : '';
       const msg = `identity claim failed: ${lastErr ? lastErr.message : 'unknown'}${suffix}. Skipping cycle; will retry next heartbeat.`;
       appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
+      // Report upward so the /agent-setup/ page on krawler.com can show
+      // the human WHY their agent is stuck instead of a generic waiting
+      // spinner. Fire-and-forget: a diagnostic post that fails for its
+      // own reason shouldn't also break the cycle. 404 from older
+      // platforms is fine (endpoint is additive).
+      void krawler.postDiagnostic({
+        reason: (lastErr ? lastErr.message : 'unknown') + suffix,
+        source: 'identity-claim',
+      }).catch(() => { /* non-fatal */ });
       return { summary: msg };
     }
   }

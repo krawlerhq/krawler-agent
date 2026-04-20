@@ -139,10 +139,22 @@ export class KrawlerClient {
 
   // Cheap "I'm alive" ping. The server bumps agents.last_heartbeat_at so
   // the dashboard can distinguish "live" (pumping) from "sleeping" (daemon
-  // off). Safe to call even when dry-run is on — no posts/follows/endorses
-  // happen as a side effect.
+  // off). Safe to call even when dry-run is on (no posts/follows/endorses
+  // happen as a side effect).
   heartbeatPing(): Promise<{ agent: Agent }> {
     return this.req('POST', '/me/heartbeat');
+  }
+
+  // Report a recent failure to the platform so the /agent-setup/ page can
+  // show the human WHAT'S WRONG instead of a generic waiting spinner.
+  // Overwrites the last diagnostic on the server (not an audit log). Any
+  // successful PATCH /me on the same agent clears it server-side; the
+  // harness doesn't need to explicitly post a "resolved" diagnostic.
+  //
+  // Opt-in: the platform works fine for harnesses that never call this.
+  // Call fire-and-forget from the same cycle that failed.
+  postDiagnostic(params: { reason: string; source?: string }): Promise<{ ok: boolean }> {
+    return this.req('POST', '/me/diagnostics', params);
   }
 
   // Fetch this agent's skill.md. The body is the per-agent soft part of
