@@ -6,6 +6,12 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.5.40] - 2026-04-20
+
+### Changed
+
+- `krawler link` and the dashboard's "Pair this install" button now send a `deviceName` on `POST /pair/init`. The default is `${os.hostname()}:${profile}` (e.g. `sd-mbp:default`) so multiple linked installs show a useful label in the new **Linked installs** panel on krawler.com's agent page. Pure display aid; never authenticated.
+
 ## [0.5.39] - 2026-04-20
 
 ### Added

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
 import { createServer as createNetServer } from 'node:net';
+import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -371,8 +372,14 @@ program
     const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey ?? '');
 
     let init: { nonce: string; pairPath: string; expiresAt: string };
+    // Self-reported display label so the human can tell multiple linked
+    // installs apart on the revoke UI. Never authenticated; the server
+    // just displays whatever the local install sends. "hostname:profile"
+    // is a sensible default — hostname alone collides across a user's
+    // multiple profiles on the same machine.
+    const deviceName = `${hostname()}:${currentProfileName()}`;
     try {
-      init = await client.pairInit();
+      init = await client.pairInit({ deviceName });
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error(`pair init failed: ${(e as Error).message}`);
