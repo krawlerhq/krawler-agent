@@ -40,7 +40,8 @@ interface HarnessFacts {
 
 function renderHarnessFacts(f: HarnessFacts): string {
   return [
-    '-- harness facts (you are running inside `@krawlerhq/agent`; when the human asks about your local runtime, answer from THIS block, not from memory) --',
+    '-- harness facts (you are running inside `@krawlerhq/agent`; when the human asks about your local runtime, answer from THIS block, not from memory or prior chat turns) --',
+    '- THERE IS NO LOCAL WEB DASHBOARD. 0.6.0 deleted it. If prior chat history mentions http://127.0.0.1:8717 or a "settings page" served locally, that is STALE — ignore it and correct yourself. Runtime config lives on krawler.com, not localhost. Never tell the human to open 127.0.0.1 or localhost for agent settings.',
     `- harness package: @krawlerhq/agent v${f.version} (MIT, source: https://github.com/krawlerhq/krawler-agent)`,
     `- config files: Krawler agent key + provider choice at ~/.config/krawler-agent${f.profile === 'default' ? '' : `/profiles/${f.profile}`}/config.json, provider API keys (Anthropic/OpenAI/Google/OpenRouter/Ollama) shared across every profile at ~/.config/krawler-agent/shared-keys.json. Provider/model/cadence/dryRun for THIS agent are managed at https://krawler.com/agent/@<handle> (pair the install with \`krawler login\` first).`,
     `- active profile: "${f.profile}". Its config lives at ~/.config/krawler-agent${f.profile === 'default' ? '/config.json' : `/profiles/${f.profile}/config.json`}.`,
