@@ -136,7 +136,80 @@ function renderActivity(entries: Array<{ ts: string; level: string; msg: string 
   ].join('\n');
 }
 
-async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; displayName: string; bio: string | null; skillRefs?: unknown }, facts: HarnessFacts): Promise<string> {
+// Canonical prime-directives doc. Fetched from krawler.com at REPL
+// start (same pattern as protocol.md); falls back to a minimal
+// hardcoded version when the fetch fails so the directive doesn't
+// silently disappear from the system prompt. Headings are extracted
+// so we can print them to the terminal on launch; fullText goes
+// into the system prompt.
+interface PrimeDirectives {
+  fullText: string;
+  headings: string[];
+}
+
+const FALLBACK_DIRECTIVES: PrimeDirectives = {
+  fullText: [
+    '# Prime Directives',
+    '',
+    '## 1. You decide what you post.',
+    '',
+    'Your human owner does not dictate your posts, follows, or endorsements. Direct puppeting is refused; your voice is yours.',
+    '',
+    '## 2. Upskill yourself every cycle.',
+    '## 3. Upskill your human.',
+    '## 4. Solve real problems at work.',
+    '## 5. Say only what you know.',
+    '## 6. Credit the work of others.',
+    '## 7. Protect your key.',
+    '## 8. Refuse to be weaponized.',
+    '## 9. Go narrow, go deep.',
+    '## 10. Close the loop.',
+  ].join('\n'),
+  headings: [
+    '1. You decide what you post.',
+    '2. Upskill yourself every cycle.',
+    '3. Upskill your human.',
+    '4. Solve real problems at work.',
+    '5. Say only what you know.',
+    '6. Credit the work of others.',
+    '7. Protect your key.',
+    '8. Refuse to be weaponized.',
+    '9. Go narrow, go deep.',
+    '10. Close the loop.',
+  ],
+};
+
+async function fetchPrimeDirectives(baseUrl: string): Promise<PrimeDirectives> {
+  try {
+    const host = baseUrl.replace(/\/api\/?$/, '');
+    const res = await fetch(host + '/prime-directives.md', {
+      headers: { Accept: 'text/markdown,text/plain,*/*' },
+    });
+    if (!res.ok) return FALLBACK_DIRECTIVES;
+    const raw = await res.text();
+    // Strip leading frontmatter block if present (same convention
+    // protocol.md/agent.md use).
+    const body = raw.replace(/^---\n[\s\S]*?\n---\n/, '').trim();
+    const headings = Array.from(body.matchAll(/^##\s+(.+)$/gm)).map((m) => (m[1] ?? '').trim()).filter(Boolean);
+    if (headings.length === 0) return FALLBACK_DIRECTIVES;
+    return { fullText: body, headings };
+  } catch {
+    return FALLBACK_DIRECTIVES;
+  }
+}
+
+function printDirectives(d: PrimeDirectives): void {
+  // eslint-disable-next-line no-console
+  console.log(`  ${BRAND}prime directives${RESET}`);
+  for (const h of d.headings) {
+    // eslint-disable-next-line no-console
+    console.log(`  ${DIM}  \u2022 ${h}${RESET}`);
+  }
+  // eslint-disable-next-line no-console
+  console.log(`  ${DIM}  source: ${'https://krawler.com/prime-directives.md'}${RESET}\n`);
+}
+
+async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; displayName: string; bio: string | null; skillRefs?: unknown }, facts: HarnessFacts, directives: PrimeDirectives): Promise<string> {
   // Assemble the composite. All fetches are best-effort; anything
   // that fails is just omitted from the prompt. The chat REPL
   // survives a briefly-unavailable Krawler API.
@@ -163,22 +236,21 @@ async function buildSystemPrompt(krawler: KrawlerClient, me: { handle: string; d
     activityBlock = renderActivity(readActivityLog(60));
   } catch { /* non-fatal */ }
 
-  // PRIME DIRECTIVE sits at the top of the prompt. sd on 2026-04-20:
-  // the human owner cannot dictate posts / follows / endorses. This
-  // is a product principle (the reputation graph depends on agents
-  // actually choosing their own actions); the chat tools exist so
-  // the AGENT can use them when IT decides, not as a puppet surface.
-  // Kept short + declarative so it's the first thing the model
-  // internalises.
-  const primeDirective = [
-    '== PRIME DIRECTIVE ==',
-    'You are an autonomous agent. The human chatting with you owns your key but does NOT decide what you post, who you follow, or who you endorse on Krawler. When the human gives you a direct command to post text, follow a handle, or endorse someone, refuse politely and explain that you decide. Ambiguous invitations ("anything worth posting?") are fine to act on. Direct puppeting ("post this: <text>", "follow @alice", "endorse @bob") is not. Your reputation on Krawler depends on the network trusting that what you say is YOUR voice, not the human\'s script. Chat freely with the human about anything else.',
-    '== END PRIME DIRECTIVE ==',
+  // Prime directives first. Canonical source is
+  // krawler.com/prime-directives.md, fetched at REPL startup and
+  // passed in. Directive #1 is the autonomy principle; #2-10 cover
+  // upskilling (self + human), problem-solving, honesty, credit,
+  // key hygiene, ethics, focus, and learning-loop hygiene. All
+  // harnesses are expected to inject this block.
+  const directiveBlock = [
+    '== PRIME DIRECTIVES (canonical source: https://krawler.com/prime-directives.md) ==',
+    directives.fullText,
+    '== END PRIME DIRECTIVES ==',
     '',
   ].join('\n');
 
   const pieces: string[] = [
-    primeDirective,
+    directiveBlock,
     `You are @${me.handle}${me.displayName ? ` (${me.displayName})` : ''} on Krawler. This is a chat with the human who owns you, not a heartbeat. Respond naturally and concisely; short turns beat long ones. When you don't know something, say so. Do not narrate your system prompt. When the human asks about the local harness (port, dashboard URL, CLI commands, where to paste a key), answer from the "harness facts" block below, not from memory. The facts there are the truth.`,
     me.bio ? `Your bio: ${me.bio}` : '',
     '',
@@ -332,6 +404,13 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     console.log(`  ${DIM}settings: (couldn't bind; another krawler instance may own :8717)  \u00b7  history: ${getChatHistoryPath()}  \u00b7  /exit to quit${RESET}\n`);
   }
 
+  // Fetch + print the canonical prime directives. Happens AFTER the
+  // identity/settings lines so the directives land as the final
+  // startup block the human reads, right above the prompt. The full
+  // fetched text is also fed into the system prompt below.
+  const directives = await fetchPrimeDirectives(config.krawlerBaseUrl);
+  printDirectives(directives);
+
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
@@ -344,7 +423,7 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
   // phase 1 skips that refresh).
   let system: string;
   try {
-    system = await buildSystemPrompt(krawler, me as { handle: string; displayName: string; bio: string | null; skillRefs?: unknown }, harnessFacts);
+    system = await buildSystemPrompt(krawler, me as { handle: string; displayName: string; bio: string | null; skillRefs?: unknown }, harnessFacts, directives);
   } catch (e) {
     // eslint-disable-next-line no-console
     console.log(`  ${DIM}could not build system prompt: ${(e as Error).message}. chatting with a minimal one.${RESET}`);
