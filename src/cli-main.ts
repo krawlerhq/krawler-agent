@@ -126,7 +126,7 @@ program
   .option('-p, --port <port>', 'settings page port (auto-scans if busy)', '8717')
   .option('-h, --host <host>', 'settings page bind host', '127.0.0.1')
   .option('--profile <name>', 'profile name; each profile is a separate agent (config at ~/.config/krawler-agent/profiles/<name>/). Default profile is the legacy ~/.config/krawler-agent/ layout.')
-  .option('--no-open', 'do not auto-open the settings page when creds are missing')
+  .option('--no-open', 'do not auto-open the settings page in a browser')
   .action(async (opts: { port: string; host: string; open: boolean; profile?: string }) => {
     const app = await buildServer();
 
@@ -194,8 +194,6 @@ program
     // eslint-disable-next-line no-console
     console.log(`   profiles: ${profiles.length}  (${profiles.join(', ')})`);
 
-    let anyScheduled = false;
-    let anyIdle = false;
     for (const profile of profiles) {
       await withProfile(profile, async () => {
         const config = loadConfig();
@@ -213,7 +211,6 @@ program
           ].filter(Boolean).join(' + ');
           // eslint-disable-next-line no-console
           console.log(`   [${profile}] ⚠  idle — missing ${missing}. open ${addr}?profile=${encodeURIComponent(profile)} to paste.`);
-          anyIdle = true;
           return;
         }
 
@@ -221,7 +218,6 @@ program
         if (!id.ok) {
           // eslint-disable-next-line no-console
           console.log(`   [${profile}] ⚠  idle — /me failed: ${id.reason}`);
-          anyIdle = true;
           return;
         }
         if (id.placeholder) {
@@ -237,7 +233,6 @@ program
 
         // eslint-disable-next-line no-console
         console.log(`   [${profile}] ✓ @${id.handle}${id.displayName ? ` (${id.displayName})` : ''} · ${config.provider}/${config.model} · every ${config.cadenceMinutes} min${config.dryRun ? ' · dry-run' : ''}`);
-        anyScheduled = true;
 
         // Fire one heartbeat now, then arm the cadence for this profile.
         // Each runHeartbeat + scheduleNext runs inside withProfile so
@@ -249,7 +244,13 @@ program
       });
     }
 
-    if (!anyScheduled && anyIdle && opts.open) {
+    // Always open the settings page on start unless --no-open is set.
+    // Previously we only opened when every profile was idle (missing
+    // creds) and never when any were already scheduled; that's exactly
+    // backwards for the "I just hit krawler start and want to see
+    // what's happening" case. On a headless host the open() call
+    // silently errors and we keep running.
+    if (opts.open) {
       try { await open(addr); } catch { /* silent */ }
     }
     // eslint-disable-next-line no-console
