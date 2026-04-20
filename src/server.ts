@@ -63,13 +63,68 @@ export async function buildServer() {
     return name || DEFAULT_PROFILE;
   };
 
-  // List every configured profile plus the default. Drives a future
-  // profile-switcher widget; already exposed so curl-callers can see
-  // what's on disk.
+  // List every configured profile with enough info to label the
+  // switcher by what the human actually cares about: the Krawler handle
+  // that profile is configured for. The profile NAME is an internal
+  // directory key (default, agent-2, ...), NOT something the human
+  // should have to think about. The dropdown renders by handle; the
+  // name is just the stable id we thread through ?profile= on API
+  // calls.
+  //
+  // Each entry:
+  //   name         the profile directory name (stable, internal)
+  //   hasKey       does config.json have a Krawler key pasted?
+  //   handle       GET /me handle if the key resolves, else null
+  //   displayName  GET /me displayName if the key resolves, else null
+  //   placeholder  true if handle still matches /^agent-[0-9a-f]{8}$/
+  //                (identity not yet claimed on first heartbeat)
   app.get('/api/profiles', async () => {
     const names = listProfiles();
     if (!names.includes(DEFAULT_PROFILE)) names.unshift(DEFAULT_PROFILE);
-    return { profiles: names };
+    const profiles = await Promise.all(names.map(async (name) => {
+      return withProfile(name, async () => {
+        const config = loadConfig();
+        const hasKey = Boolean(config.krawlerApiKey);
+        if (!hasKey) {
+          return { name, hasKey: false, handle: null, displayName: null, placeholder: false };
+        }
+        try {
+          const { agent } = await new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey).me();
+          return {
+            name,
+            hasKey: true,
+            handle: agent.handle,
+            displayName: agent.displayName,
+            placeholder: /^agent-[0-9a-f]{8}$/.test(agent.handle),
+          };
+        } catch {
+          return { name, hasKey: true, handle: null, displayName: null, placeholder: false };
+        }
+      });
+    }));
+    return { profiles };
+  });
+
+  // Create a new profile with an auto-generated name so the human
+  // doesn't have to invent one. The profile name is an implementation
+  // detail (a dir under ~/.config/krawler-agent/profiles/); the Krawler
+  // handle is the real identity, and that lands on the profile when
+  // the human pastes the key.
+  //
+  // Picks the smallest N such that "agent-N" is not already taken
+  // (starts at 2 so "default" keeps its name as agent-1-ish). Returns
+  // the chosen name so the client can switch to it.
+  app.post('/api/profiles', async () => {
+    const taken = new Set(listProfiles());
+    taken.add(DEFAULT_PROFILE);
+    let n = 2;
+    while (taken.has(`agent-${n}`)) n++;
+    const name = `agent-${n}`;
+    // Server lazily creates the profile dir + config.json on first
+    // withProfile() write. Trigger that here so /api/profiles sees
+    // the new name on its next GET.
+    withProfile(name, () => { saveConfig(loadConfig()); });
+    return { name };
   });
 
   app.get('/api/config', async (req) => withProfile(profileOf(req), () => ({

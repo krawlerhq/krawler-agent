@@ -337,6 +337,9 @@ async function saveKrawlerKey() {
     editMode.delete('krawler');
     renderKrawlerKeyField();
     fetchIdentity();
+    // Profile dropdown's label for THIS profile just went from
+    // "no key" to "@<handle>"; refresh so it updates.
+    fetchProfiles();
   } catch (e) {
     setStatus(status, `error: ${e.message}`, 'err');
   }
@@ -395,29 +398,61 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
-// ───────────────────────── Profile switcher ─────────────────────────
+// ───────────────────────── Agent (profile) switcher ─────────────────────────
+//
+// Profile name is an internal dir key; users see the Krawler handle.
+// `knownProfiles` holds the rich object list from GET /api/profiles
+// (name, hasKey, handle, displayName, placeholder) so the dropdown
+// can render "@research-foo" instead of the raw dir name.
 
 async function fetchProfiles() {
   try {
     const r = await fetch('/api/profiles');
     const j = await r.json();
-    knownProfiles = Array.isArray(j.profiles) && j.profiles.length ? j.profiles : ['default'];
+    const list = Array.isArray(j.profiles) ? j.profiles : [];
+    // Server always returns objects now; coerce any legacy string
+    // entries (older daemon) into the object shape so the rest of
+    // the page doesn't have to branch.
+    knownProfiles = list.length
+      ? list.map((p) => typeof p === 'string'
+          ? { name: p, hasKey: false, handle: null, displayName: null, placeholder: false }
+          : p)
+      : [{ name: 'default', hasKey: false, handle: null, displayName: null, placeholder: false }];
   } catch {
-    knownProfiles = ['default'];
+    knownProfiles = [{ name: 'default', hasKey: false, handle: null, displayName: null, placeholder: false }];
   }
-  if (!knownProfiles.includes(activeProfile)) activeProfile = knownProfiles[0] ?? 'default';
+  const names = knownProfiles.map((p) => p.name);
+  if (!names.includes(activeProfile)) activeProfile = names[0] ?? 'default';
   renderProfileSwitcher();
+}
+
+function labelForProfile(p) {
+  // Prefer the claimed identity. Fall back through placeholder state,
+  // no-key state, and finally the raw profile name for pre-0.5.6
+  // installs that never claimed.
+  if (p.handle && !p.placeholder) {
+    return `@${p.handle}${p.displayName ? ` (${p.displayName})` : ''}`;
+  }
+  if (p.handle && p.placeholder) {
+    return `${p.name} \u2014 setting up (@${p.handle})`;
+  }
+  if (p.hasKey) {
+    return `${p.name} \u2014 key pasted, krawler.com unreachable`;
+  }
+  return `${p.name} \u2014 (no key pasted yet)`;
 }
 
 function renderProfileSwitcher() {
   const wrap = $('profile-switcher');
   const sel = $('profile-select');
   if (!wrap || !sel) return;
-  // Always show the switcher so operators see which profile they are
-  // editing. Even a single-profile install benefits from the "default"
-  // label and the + New button.
+  // Always show the switcher so operators see which agent they are
+  // editing. Single-profile installs see the "default" row labelled
+  // by handle (or "no key" on first run).
   wrap.style.display = '';
-  sel.innerHTML = knownProfiles.map((p) => `<option value="${escapeAttr(p)}"${p === activeProfile ? ' selected' : ''}>${escapeHtml(p)}</option>`).join('');
+  sel.innerHTML = knownProfiles.map((p) =>
+    `<option value="${escapeAttr(p.name)}"${p.name === activeProfile ? ' selected' : ''}>${escapeHtml(labelForProfile(p))}</option>`
+  ).join('');
 }
 
 async function switchProfile(name) {
@@ -430,30 +465,23 @@ async function switchProfile(name) {
   await fetchInstalledSkills();
 }
 
-async function createProfile(rawName) {
-  const name = (rawName || '').trim().toLowerCase();
-  if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(name)) {
-    alert('Profile name must be lowercase letters/numbers/_/-, 1 to 63 chars, cannot start with a hyphen.');
+async function addAgent() {
+  // POST /api/profiles mints the next free `agent-N` dir and returns
+  // the name. No user prompt, no name to invent; the profile name is
+  // an implementation detail that the next "@real-handle" label will
+  // make irrelevant as soon as identity lands.
+  let newName;
+  try {
+    const r = await fetch('/api/profiles', { method: 'POST' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    newName = j.name;
+  } catch (e) {
+    alert(`Could not add a new agent: ${e.message}`);
     return;
   }
-  if (knownProfiles.includes(name)) {
-    alert(`Profile "${name}" already exists — switching to it.`);
-    activeProfile = name;
-    await fetchProfiles();
-    await switchProfile(name);
-    return;
-  }
-  // Server lazily creates the profile dir + config.json when the first
-  // /api/config GET or PATCH lands for that profile. Trigger it by
-  // fetching the empty config. After this the profile shows up in
-  // /api/profiles and the switcher.
-  activeProfile = name;
-  runtimeHydrated = false;
-  editMode.clear();
-  await fetchConfig({ hydrateRuntime: true });
   await fetchProfiles();
-  await fetchIdentity();
-  await fetchInstalledSkills();
+  await switchProfile(newName);
 }
 
 // ───────────────────────── Installed skills ─────────────────────────
@@ -580,34 +608,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('btn-save').addEventListener('click', saveRuntime);
 
-  // Profile switcher wiring.
+  // Agent (profile) switcher wiring. The text-input "name it yourself"
+  // flow is gone: + Add agent POSTs /api/profiles, server picks the
+  // next free agent-N dir, client switches to it. The human never has
+  // to name a directory.
   $('profile-select')?.addEventListener('change', (e) => {
     void switchProfile(e.target.value);
   });
-  $('profile-add-btn')?.addEventListener('click', () => {
-    $('profile-add-btn').style.display = 'none';
-    $('profile-new-name').style.display = '';
-    $('profile-create-btn').style.display = '';
-    $('profile-cancel-btn').style.display = '';
-    $('profile-new-name').focus();
-  });
-  const resetNewProfileUI = () => {
-    $('profile-add-btn').style.display = '';
-    $('profile-new-name').style.display = 'none';
-    $('profile-new-name').value = '';
-    $('profile-create-btn').style.display = 'none';
-    $('profile-cancel-btn').style.display = 'none';
-  };
-  $('profile-cancel-btn')?.addEventListener('click', resetNewProfileUI);
-  $('profile-create-btn')?.addEventListener('click', async () => {
-    const name = $('profile-new-name').value.trim();
-    await createProfile(name);
-    resetNewProfileUI();
-  });
-  $('profile-new-name')?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); $('profile-create-btn').click(); }
-    if (e.key === 'Escape') { e.preventDefault(); resetNewProfileUI(); }
-  });
+  $('profile-add-btn')?.addEventListener('click', () => { void addAgent(); });
 
   // Delegated click handler for the installed-skills panel.
   document.addEventListener('click', (e) => {
@@ -621,6 +629,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   setInterval(() => { fetchConfig().catch(() => {}); }, 15000);
   setInterval(fetchIdentity, 30000);
+  // Refresh the dropdown periodically: placeholder handles flip to
+  // real ones when the identity claim lands, and we want the label
+  // to reflect reality without a page reload.
+  setInterval(() => { fetchProfiles().catch(() => {}); }, 45000);
   // Installed-skills panel is deliberately NOT on an interval poll: a
   // bare innerHTML rebuild would collapse whichever <details> the user
   // was reading. The panel refreshes on page load, after a sync, and
