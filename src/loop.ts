@@ -1,5 +1,6 @@
-import { appendActivityLog, getActiveCredentials, loadConfig, migratePlaybooksDir, saveConfig } from './config.js';
+import { appendActivityLog, getActiveCredentials, loadConfig, loadPairToken, migratePlaybooksDir, saveConfig } from './config.js';
 import { meWithAutoRotate } from './auto-rotate.js';
+import { resolveEffectiveConfig } from './effective-config.js';
 import { currentProfileName, withProfile } from './profile-context.js';
 import { decideHeartbeat, pickIdentity, proposeAgentSkill } from './model.js';
 import { KrawlerClient } from './krawler.js';
@@ -66,12 +67,58 @@ export async function runHeartbeat(
   trigger: 'scheduled' | 'manual' | 'post-now',
   overrides: HeartbeatOverrides = {},
 ): Promise<{ summary: string }> {
-  const config = loadConfig();
+  // Server-first config read: if this install has a pair token, fetch
+  // provider/model/cadence/dryRun/behaviors from the server so that a
+  // human managing multiple machines only sets these once. Falls back
+  // to local config.json when unpaired or when the server is
+  // unreachable — see resolveEffectiveConfig for details.
+  const effective = await resolveEffectiveConfig();
+  const local = loadConfig();
+  // Hybrid config: server-sourced runtime knobs overlaid on local
+  // credentials + lastHeartbeat. loop.ts code below continues to use
+  // `config.*` as before; the overlay is invisible to readers.
+  const config = {
+    ...local,
+    provider: effective.provider,
+    model: effective.model,
+    cadenceMinutes: effective.cadenceMinutes,
+    dryRun: effective.dryRun,
+    behaviors: effective.behaviors,
+    reflection: { enabled: effective.reflectionEnabled },
+  };
   const effectiveDryRun = overrides.forceDryRunOff ? false : config.dryRun;
   const effectiveBehaviors = {
     post: overrides.forcePost ? true : config.behaviors.post,
     endorse: config.behaviors.endorse,
     follow: config.behaviors.follow,
+  };
+
+  // Upload a per-cycle heartbeat summary to krawler.com if this install
+  // has a pair token. Fire-and-forget: a failed summary upload must NOT
+  // break the local cycle. Details live local in activity.log; only a
+  // minimal outcome record goes upstream so the agent page on
+  // krawler.com can show recent activity without uploading every log
+  // line (activity.log stays local — privacy).
+  const cycleStartedAt = new Date().toISOString();
+  const postSummary = async (outcome: 'ok' | 'skipped' | 'failed', counts: { posts?: number; comments?: number; follows?: number; endorses?: number } = {}, errorMsg?: string): Promise<void> => {
+    const pair = loadPairToken();
+    if (!pair || !pair.handle) return;
+    try {
+      const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey ?? '');
+      await client.postHeartbeatSummary(pair.token, pair.handle, {
+        startedAt: cycleStartedAt,
+        trigger,
+        outcome,
+        posts: counts.posts ?? 0,
+        comments: counts.comments ?? 0,
+        follows: counts.follows ?? 0,
+        endorses: counts.endorses ?? 0,
+        error: errorMsg,
+        provider: config.provider,
+        model: config.model,
+        dryRun: effectiveDryRun,
+      });
+    } catch { /* best-effort */ }
   };
   const started = new Date().toISOString();
   appendActivityLog({
@@ -102,6 +149,7 @@ export async function runHeartbeat(
   if (!hasModelCreds || !config.krawlerApiKey) {
     const msg = `cannot heartbeat: missing ${!hasModelCreds ? `${config.provider} credentials` : ''}${!hasModelCreds && !config.krawlerApiKey ? ' and ' : ''}${!config.krawlerApiKey ? 'krawlerApiKey' : ''}`;
     appendActivityLog({ ts: new Date().toISOString(), level: 'warn', msg });
+    await postSummary('failed', {}, msg);
     return { summary: msg };
   }
 
@@ -115,6 +163,7 @@ export async function runHeartbeat(
   } catch (e) {
     const msg = `/me failed — key invalid or Krawler unreachable: ${(e as Error).message}`;
     appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
+    await postSummary('failed', {}, msg);
     return { summary: msg };
   }
 
@@ -296,6 +345,7 @@ export async function runHeartbeat(
         reason,
         source: `identity-claim.${category}`,
       }).catch(() => { /* non-fatal */ });
+      await postSummary('failed', {}, msg);
       return { summary: msg };
     }
   }
@@ -308,6 +358,7 @@ export async function runHeartbeat(
   } catch (e) {
     const msg = `/feed failed: ${(e as Error).message}`;
     appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
+    await postSummary('failed', {}, msg);
     return { summary: msg };
   }
 
@@ -336,6 +387,7 @@ export async function runHeartbeat(
   } catch (e) {
     const msg = `model decide failed: ${(e as Error).message}`;
     appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
+    await postSummary('failed', {}, msg);
     return { summary: msg };
   }
 
@@ -604,6 +656,21 @@ export async function runHeartbeat(
   saveConfig({ lastHeartbeat: new Date().toISOString() });
   appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: 'heartbeat complete' });
 
+  // Summary post: outcome is 'skipped' when the model chose not to act
+  // (skipReason set) or when dry-run was on and nothing dispatched;
+  // otherwise 'ok'. Counts reflect what actually happened, not what the
+  // model proposed (dry-run means the model proposed N but 0 dispatched).
+  const dispatched = !effectiveDryRun;
+  await postSummary(
+    decision.skipReason ? 'skipped' : 'ok',
+    {
+      posts: dispatched ? decision.posts.length : 0,
+      comments: dispatched ? decision.comments.length : 0,
+      follows: dispatched ? decision.follows.length : 0,
+      endorses: dispatched ? decision.endorsements.length : 0,
+    },
+  );
+
   return {
     summary: `posts=${decision.posts.length} endorsements=${decision.endorsements.length} follows=${decision.follows.length}${decision.skipReason ? ` skip="${decision.skipReason}"` : ''}`,
   };
@@ -616,18 +683,29 @@ export async function runHeartbeat(
 // profile's activity when the loop is retired.
 const handles = new Map<string, ReturnType<typeof setTimeout>>();
 
-export function scheduleNext(profile?: string): void {
+export async function scheduleNext(profile?: string): Promise<void> {
   const name = profile ?? currentProfileName();
   if (handles.has(name)) return;
-  const config = withProfile(name, () => loadConfig()) as ReturnType<typeof loadConfig>;
-  if (!config.legacyHeartbeat) return;
-  const ms = Math.max(5, config.cadenceMinutes) * 60 * 1000;
+  const localConfig = withProfile(name, () => loadConfig()) as ReturnType<typeof loadConfig>;
+  if (!localConfig.legacyHeartbeat) return;
+
+  // Cadence: server first (so re-scheduling after each cycle picks up
+  // krawler.com edits), fall back to local config.json. A server fetch
+  // failure here is never fatal — we just use the last-known-local
+  // cadence for the next tick.
+  let cadenceMinutes = localConfig.cadenceMinutes;
+  try {
+    const eff = await withProfile(name, async () => await resolveEffectiveConfig());
+    cadenceMinutes = eff.cadenceMinutes;
+  } catch { /* ignore */ }
+
+  const ms = Math.max(5, cadenceMinutes) * 60 * 1000;
   const h = setTimeout(async () => {
     handles.delete(name);
     try {
       await withProfile(name, () => runHeartbeat('scheduled'));
     } catch { /* already logged */ }
-    scheduleNext(name);
+    void scheduleNext(name);
   }, ms);
   handles.set(name, h);
 }

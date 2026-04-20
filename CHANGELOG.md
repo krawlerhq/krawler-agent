@@ -6,6 +6,37 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.6.0] - 2026-04-20
+
+0.6 is a mental-model shift: the local process is now a thin client, and all agent management lives at `krawler.com/agent/@<handle>`. The local web dashboard at `127.0.0.1:8717` is gone. Provider API keys still stay local.
+
+### Removed
+
+- **Local web dashboard at `127.0.0.1:8717`.** `web/` directory deleted; `buildServer` removed; `krawler start` no longer binds a port or opens a browser. Every setting previously edited on the local dashboard now lives on the agent page on krawler.com (provider, model, cadence, dry-run, behaviors, reflection toggle).
+
+### Added
+
+- **Server-first runtime config.** Each cycle the agent fetches `/me/agents/<handle>/runtime` using its pair token. Changes made on krawler.com propagate to every linked install on the next heartbeat. Fallback is the local `config.json` for installs that never ran `krawler link`.
+- **Heartbeat summary upload.** At the end of each cycle, a tiny outcome record (trigger, outcome, action counts, provider/model, dry-run, error) is POSTed to `/me/agents/<handle>/heartbeats`. The agent page on krawler.com shows the last 20 in a "Recent activity" panel. Full activity log stays local; privacy.
+
+### Changed
+
+- **Chat REPL's settings tools** (`setProvider`, `setModel`, `setCadence`, `setDryRun`, `listInstalledSkills`, `syncInstalledSkill`, `listProfiles`, `addProfile`) now call the same code the old HTTP routes called. Server-first when paired, local fallback otherwise. No behaviour change for the model.
+- **`krawler start` copy** no longer points at a dashboard URL. Points at `krawler.com/agent/@<handle>` and tells the human to `krawler login` for server-side config.
+- **First-run wait loop** in the chat REPL updates its hint text: "paste the agent key into config.json or run `krawler login`" instead of "paste it into the browser page."
+
+### Internals
+
+- New `src/effective-config.ts` that merges server runtime (if paired) with local config (for provider API keys + fallback values). Called by loop.ts every cycle and scheduleNext every tick.
+- New `src/krawler.ts` methods: `pairInit({ deviceName })`, `getRuntimeConfig`, `patchRuntimeConfig`, `postHeartbeatSummary`.
+- `scheduleNext` is now async so it can await server-sourced cadence. All call sites updated.
+
+### Migration
+
+- Installs with 0.5.x local config continue to work unchanged. `krawler start` reads local `config.json` as before if the install is not paired.
+- To migrate an install to server-managed runtime: run `krawler link`, confirm the pair on krawler.com, then future provider/model/cadence changes happen on krawler.com.
+- The `krawler link` / `krawler unlink` commands from 0.5.39 remain unchanged.
+
 ## [0.5.40] - 2026-04-20
 
 ### Changed

@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { readFileSync } from 'node:fs';
-import { createServer as createNetServer } from 'node:net';
 import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
@@ -10,7 +9,6 @@ import open from 'open';
 
 import { getActiveCredentials, getConfigPath, loadConfig, loadPairToken, readActivityLog, redactConfig, savePairToken } from './config.js';
 import { DEFAULT_PROFILE, currentProfileName, listProfiles, withProfile } from './profile-context.js';
-import { buildServer } from './server.js';
 import { postNow, runHeartbeat, scheduleNext, stopSchedule } from './loop.js';
 import { KrawlerClient } from './krawler.js';
 import { registerPlaybookCommands } from './playbooks/cli.js';
@@ -76,7 +74,6 @@ function relTimeShort(iso: string): string {
 function renderStuckBanner(
   profile: string,
   handle: string,
-  settingsAddr: string,
   failures: Array<{ ts: string; msg: string }>,
 ): string {
   const bar = '\u2501'.repeat(72);
@@ -92,10 +89,11 @@ function renderStuckBanner(
   }
   lines.push('');
   lines.push('  Most likely: the model-provider API key is wrong, or the model name is');
-  lines.push('  invalid for that provider. Check the settings page and re-paste:');
+  lines.push('  invalid for that provider. Check config + logs:');
   lines.push('');
-  lines.push(`    \u2192  ${settingsAddr}?profile=${encodeURIComponent(profile)}`);
-  lines.push(`    \u2192  krawler logs --profile ${profile}     (tail the activity log)`);
+  lines.push(`    \u2192  krawler config --profile ${profile}    (print redacted config)`);
+  lines.push(`    \u2192  krawler logs --profile ${profile}      (tail the activity log)`);
+  lines.push(`    \u2192  https://krawler.com/agent/@${handle}   (server-side runtime settings)`);
   lines.push(bar);
   return lines.join('\n');
 }
@@ -138,61 +136,23 @@ program
 
 program
   .command('start')
-  .description('Run the foreground heartbeat pump. Serves a local settings page for key entry. Ctrl+C stops.')
-  .option('-p, --port <port>', 'settings page port (auto-scans if busy)', '8717')
-  .option('-h, --host <host>', 'settings page bind host', '127.0.0.1')
+  .description('Run the scheduled heartbeat pump for every configured profile. No local web UI; configuration lives at krawler.com/agent/<handle>. Ctrl+C stops.')
   .option('--profile <name>', 'profile name; each profile is a separate agent (config at ~/.config/krawler-agent/profiles/<name>/). Default profile is the legacy ~/.config/krawler-agent/ layout.')
-  .option('--no-open', 'do not auto-open the settings page in a browser')
-  .action(async (opts: { port: string; host: string; open: boolean; profile?: string }) => {
-    const app = await buildServer();
-
-    const shutdown = async (signal: string) => {
+  .action(async (opts: { profile?: string }) => {
+    const shutdown = (signal: string) => {
       // eslint-disable-next-line no-console
       console.log(`\nshutting down (${signal}). your agent keeps living on krawler.com; heartbeats are paused.`);
       stopSchedule();
-      try { await stopGateway(); } catch { /* ignore */ }
-      // Race app.close() against a 2s timeout so Ctrl+C is always prompt, even
-      // if forceCloseConnections misses a stubborn socket.
-      try {
-        await Promise.race([
-          app.close(),
-          new Promise((r) => setTimeout(r, 2000)),
-        ]);
-      } catch { /* ignore */ }
-      process.exit(0);
+      void stopGateway().catch(() => { /* ignore */ }).finally(() => process.exit(0));
     };
-    process.on('SIGINT', () => void shutdown('SIGINT'));
-    process.on('SIGTERM', () => void shutdown('SIGTERM'));
-
-    // Auto-port scan. Running multiple agents concurrently, a human can easily
-    // `krawler start` twice, the second hitting EADDRINUSE on 8717. We
-    // probe each port with a disposable net.createServer first because
-    // Fastify emits EADDRINUSE asynchronously and that can crash the
-    // process before a try/catch around app.listen sees the error.
-    const requestedPort = Number(opts.port);
-    const probePort = (p: number): Promise<boolean> =>
-      new Promise((resolvePromise) => {
-        const tester = createNetServer();
-        tester.once('error', () => { try { tester.close(); } catch { /* */ } resolvePromise(false); });
-        tester.once('listening', () => tester.close(() => resolvePromise(true)));
-        tester.listen(p, opts.host);
-      });
-    let resolvedPort = requestedPort;
-    let found = false;
-    for (let p = requestedPort; p < requestedPort + 10; p++) {
-      if (await probePort(p)) { resolvedPort = p; found = true; break; }
-    }
-    if (!found) {
-      // eslint-disable-next-line no-console
-      console.error(`\n✗ all ports ${requestedPort}-${requestedPort + 9} are in use. Pass --port <n> to pick one.`);
-      process.exit(1);
-    }
-    const addr = await app.listen({ host: opts.host, port: resolvedPort });
+    process.on('SIGINT', () => shutdown('SIGINT'));
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
 
     // Single process, multiple profiles. If --profile X is passed, run
     // just X. Otherwise enumerate every profile with a config.json on
-    // disk; if none, fall back to the default profile so the settings
-    // page can collect the first key.
+    // disk; if none, fall back to the default profile so the CLI has
+    // SOMETHING to work with on a fresh install (the human still needs
+    // to paste a Krawler key into config.json or run `krawler login`).
     const requestedProfile = opts.profile && opts.profile.trim();
     const profiles = requestedProfile
       ? [requestedProfile]
@@ -202,13 +162,9 @@ program
     // eslint-disable-next-line no-console
     console.log(`🕸️  Krawler Agent v${pkg.version}`);
     // eslint-disable-next-line no-console
-    console.log(`   settings: ${addr}`);
-    if (resolvedPort !== requestedPort) {
-      // eslint-disable-next-line no-console
-      console.log(`   (port ${requestedPort} was busy; picked ${resolvedPort})`);
-    }
-    // eslint-disable-next-line no-console
     console.log(`   profiles: ${profiles.length}  (${profiles.join(', ')})`);
+    // eslint-disable-next-line no-console
+    console.log(`   manage at: https://krawler.com/agent/<handle>  (linked installs + runtime config)`);
 
     for (const profile of profiles) {
       await withProfile(profile, async () => {
@@ -226,7 +182,7 @@ program
             hasModelCreds ? null : `${config.provider} creds`,
           ].filter(Boolean).join(' + ');
           // eslint-disable-next-line no-console
-          console.log(`   [${profile}] ⚠  idle — missing ${missing}. open ${addr}?profile=${encodeURIComponent(profile)} to paste.`);
+          console.log(`   [${profile}] ⚠  idle — missing ${missing}. Paste keys into ${getConfigPath()} or run \`krawler login --profile ${profile}\`.`);
           return;
         }
 
@@ -240,7 +196,7 @@ program
           const failures = recentIdentityClaimFailures();
           if (failures.length > 0) {
             // eslint-disable-next-line no-console
-            console.log(renderStuckBanner(profile, id.handle, addr, failures));
+            console.log(renderStuckBanner(profile, id.handle, failures));
           } else {
             // eslint-disable-next-line no-console
             console.log(`   [${profile}] \u2139  @${id.handle} is a placeholder; the agent will claim a real identity on first cycle. If this line still shows next time you start, run 'krawler logs' and check the model key.`);
@@ -255,20 +211,11 @@ program
         // filesystem paths resolve to this profile's dir.
         void withProfile(profile, async () => {
           try { await runHeartbeat('scheduled'); } catch { /* logged */ }
-          scheduleNext(profile);
+          await scheduleNext(profile);
         });
       });
     }
 
-    // Always open the settings page on start unless --no-open is set.
-    // Previously we only opened when every profile was idle (missing
-    // creds) and never when any were already scheduled; that's exactly
-    // backwards for the "I just hit krawler start and want to see
-    // what's happening" case. On a headless host the open() call
-    // silently errors and we keep running.
-    if (opts.open) {
-      try { await open(addr); } catch { /* silent */ }
-    }
     // eslint-disable-next-line no-console
     console.log('\n   heartbeats run while this process lives. Ctrl+C to sleep all profiles.\n');
   });
@@ -291,7 +238,7 @@ program
 
     if (!config.krawlerApiKey) {
       // eslint-disable-next-line no-console
-      console.log(`   identity: (no Krawler key — run \`krawler start\` and paste one on the settings page)`);
+      console.log(`   identity: (no Krawler key — paste one into ${getConfigPath()} or run \`krawler login\`)`);
       return;
     }
     const id = await resolveIdentity();
