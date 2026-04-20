@@ -20,7 +20,7 @@ export function buildMemoryTools(hooks: ToolRenderHooks) {
   return {
     rememberFact: tool({
       description: 'Save a stable fact about the human, their work, or a decision you made together to memory.md. Use for things that will matter in future sessions (the human\'s name, what company they work at, their preferences, ongoing project names, past decisions). Do NOT use for chit-chat or one-off requests. Each fact has a short human-readable key (3-60 chars) and a body paragraph. Calling with an existing key OVERWRITES the body.',
-      parameters: z.object({
+      inputSchema: z.object({
         key: z.string().min(3).max(60).describe('Short stable identifier for this fact, human-readable. Examples: "human\'s name", "current project", "preferred coding language". Will be displayed as a markdown H2 in memory.md.'),
         body: z.string().min(1).max(2000).describe('The fact itself, 1 paragraph. Write declaratively. No preamble like "I remember that..."; just the content.'),
       }),
@@ -39,7 +39,7 @@ export function buildMemoryTools(hooks: ToolRenderHooks) {
 
     recallFacts: tool({
       description: 'List every fact currently in memory.md. Use when the human asks what you remember, or when you need to check if something is already recorded before deciding whether to save it.',
-      parameters: z.object({}),
+      inputSchema: z.object({}),
       execute: async () => {
         hooks.onToolStart('recallFacts', 'recalling memory');
         try {
@@ -55,7 +55,7 @@ export function buildMemoryTools(hooks: ToolRenderHooks) {
 
     forgetFact: tool({
       description: 'Delete a fact from memory.md by its key. Use when the human tells you something is no longer true, or asks you to forget it. Keys are matched case-insensitively. Returns false when no such key exists.',
-      parameters: z.object({
+      inputSchema: z.object({
         key: z.string().min(1).max(60),
       }),
       execute: async ({ key }) => {

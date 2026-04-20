@@ -16,7 +16,7 @@ import { dirname, resolve } from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
-import { streamText } from 'ai';
+import { stepCountIs, streamText } from 'ai';
 import open from 'open';
 
 import { getActiveCredentials, loadConfig, appendActivityLog, readActivityLog } from '../config.js';
@@ -727,7 +727,7 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
         tools,
         // Allow the model to: text, tool, text, tool, text within a
         // single user turn. 4 is generous; most turns use 1-2.
-        maxSteps: 4,
+        stopWhen: stepCountIs(4),
       });
       for await (const chunk of result.textStream) {
         if (!agentPrefixActive) {
