@@ -36,6 +36,7 @@ import type { StatusMode } from './StatusLine.js';
 import { theme } from './theme.js';
 import type { AssistantSegment, ChatMessage, HarnessContext, ToolEvent } from './types.js';
 import type { AgentRegistry } from '../agents-registry.js';
+import type { ProfileStatus } from '../../heartbeat-pump.js';
 
 const THINKING_VERBS = [
   'Thinking', 'Reflecting', 'Considering', 'Pondering', 'Deliberating',
@@ -59,9 +60,13 @@ interface Props {
   driver: Omit<DriverDeps, 'system'>;
   system: string;
   registry: AgentRegistry;
+  // Initial heartbeat-pump statuses captured during REPL boot.
+  // Rendered as the first system messages so the human sees which
+  // profiles are cycling and which are idle right at launch.
+  initialPumpStatuses?: ProfileStatus[];
 }
 
-export function App({ ctx, krawler, driver, system, registry }: Props): React.ReactElement {
+export function App({ ctx, krawler, driver, system, registry, initialPumpStatuses }: Props): React.ReactElement {
   const { exit } = useApp();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inflight, setInflight] = useState<ChatMessage | null>(null);
@@ -182,6 +187,71 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
       setMode('idle');
     }, TICK_MS);
     return () => clearInterval(id);
+  }, []);
+
+  // Render the initial pump statuses once on mount as system
+  // messages. The pre-Ink console output would've been wiped by the
+  // screen-clear just before Ink takes over, so pass through props.
+  useEffect(() => {
+    if (!initialPumpStatuses || initialPumpStatuses.length === 0) return;
+    const pumping = initialPumpStatuses.filter((s) => s.state === 'pumping');
+    const idle = initialPumpStatuses.filter((s) => s.state === 'idle');
+    if (pumping.length > 0) {
+      const list = pumping.map((s) => s.state === 'pumping' ? `@${s.handle}` : '').filter(Boolean).join(', ');
+      pushSystem(`▸ heartbeat pump · ${pumping.length} profile${pumping.length === 1 ? '' : 's'} cycling: ${list}`);
+    }
+    for (const s of idle) {
+      if (s.state === 'idle') pushSystem(`  [${s.profile}] idle · ${s.reason}`);
+    }
+    // Only run once; prop reference never changes after mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Subscribe to heartbeat-pump events. When the background pump
+  // fires a cycle for one of the network profiles, surface a live
+  // line in the chat — Claude-Code-style "thinking…" feel, so the
+  // human sees when each agent is working instead of the pump
+  // cycling silently in the background.
+  useEffect(() => {
+    let disposed = false;
+    let subscribe: null | (() => void) = null;
+    (async () => {
+      try {
+        const mod = await import('../../heartbeat-pump.js');
+        if (disposed) return;
+        const bus = mod.pumpEvents;
+        const onStart = (e: { handle: string }) => {
+          pushSystem(`▸ heartbeat @${e.handle}\u2026`);
+        };
+        const onEnd = (e: { handle: string; outcome: string; posts: number; endorses: number; follows: number; error?: string; skipReason?: string }) => {
+          if (e.outcome === 'failed') {
+            pushSystem(`❯ @${e.handle} cycle failed \u00b7 ${e.error ?? 'unknown error'}`);
+            return;
+          }
+          if (e.posts > 0 || e.endorses > 0 || e.follows > 0) {
+            const bits: string[] = [];
+            if (e.posts) bits.push(`posted ${e.posts}`);
+            if (e.endorses) bits.push(`endorsed ${e.endorses}`);
+            if (e.follows) bits.push(`followed ${e.follows}`);
+            pushSystem(`❯ @${e.handle} \u00b7 ${bits.join(', ')}`);
+          } else if (e.skipReason) {
+            pushSystem(`❯ @${e.handle} skipped \u00b7 "${e.skipReason}"`);
+          } else {
+            pushSystem(`❯ @${e.handle} cycle done \u00b7 no actions`);
+          }
+        };
+        bus.on('cycle-start', onStart);
+        bus.on('cycle-end', onEnd);
+        subscribe = () => {
+          bus.off('cycle-start', onStart);
+          bus.off('cycle-end', onEnd);
+        };
+      } catch { /* pump-events unavailable; silently skip */ }
+    })();
+    return () => {
+      disposed = true;
+      if (subscribe) subscribe();
+    };
   }, []);
 
   // Boot diagnostic. Fetch the setup checklist once on mount and, if

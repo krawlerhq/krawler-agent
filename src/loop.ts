@@ -6,6 +6,7 @@ import { decideHeartbeat, pickIdentity, proposeAgentSkill } from './model.js';
 import { KrawlerClient } from './krawler.js';
 import { fetchInstalledSkillsMd, writeLocalSkillBody } from './skill-refs.js';
 import type { InstalledSkillEntry } from './skill-refs.js';
+import { pumpEvents } from './heartbeat-pump.js';
 
 // Default agent.md used when krawler.com doesn't have one for this agent
 // yet (e.g. pre-0.4 platform, or a brand-new agent that hasn't been seeded
@@ -368,6 +369,13 @@ export async function runHeartbeat(
     msg: `signed in as @${me.handle}; ${feed.length} new feed item(s) since ${config.lastHeartbeat ?? 'epoch'}`,
   });
 
+  // Announce cycle-start to anyone listening (e.g. the chat REPL
+  // UI). Fired once we know the handle, so subscribers can label
+  // the "thinking..." line with @handle instead of a raw profile
+  // name. No cycle-start on the error paths above because there's
+  // no handle to label with if /me failed.
+  pumpEvents.emit('cycle-start', { profile: currentProfileName(), handle: me.handle });
+
   // 4. Ask the model what to do.
   let decision;
   try {
@@ -388,6 +396,13 @@ export async function runHeartbeat(
     const msg = `model decide failed: ${(e as Error).message}`;
     appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg });
     await postSummary('failed', {}, msg);
+    pumpEvents.emit('cycle-end', {
+      profile: currentProfileName(),
+      handle: me.handle,
+      outcome: 'failed' as const,
+      posts: 0, endorses: 0, follows: 0,
+      error: msg,
+    });
     return { summary: msg };
   }
 
@@ -661,15 +676,25 @@ export async function runHeartbeat(
   // otherwise 'ok'. Counts reflect what actually happened, not what the
   // model proposed (dry-run means the model proposed N but 0 dispatched).
   const dispatched = !effectiveDryRun;
-  await postSummary(
-    decision.skipReason ? 'skipped' : 'ok',
-    {
-      posts: dispatched ? decision.posts.length : 0,
-      comments: dispatched ? decision.comments.length : 0,
-      follows: dispatched ? decision.follows.length : 0,
-      endorses: dispatched ? decision.endorsements.length : 0,
-    },
-  );
+  const counts = {
+    posts: dispatched ? decision.posts.length : 0,
+    comments: dispatched ? decision.comments.length : 0,
+    follows: dispatched ? decision.follows.length : 0,
+    endorses: dispatched ? decision.endorsements.length : 0,
+  };
+  await postSummary(decision.skipReason ? 'skipped' : 'ok', counts);
+
+  // Emit cycle-end so the REPL UI can show a "@handle cycle done"
+  // line in the chat, matching the Claude-Code "thinking" aesthetic.
+  pumpEvents.emit('cycle-end', {
+    profile: currentProfileName(),
+    handle: me.handle,
+    outcome: decision.skipReason ? 'skipped' : 'ok',
+    posts: counts.posts,
+    endorses: counts.endorses,
+    follows: counts.follows,
+    skipReason: decision.skipReason || undefined,
+  });
 
   return {
     summary: `posts=${decision.posts.length} endorsements=${decision.endorsements.length} follows=${decision.follows.length}${decision.skipReason ? ` skip="${decision.skipReason}"` : ''}`,
