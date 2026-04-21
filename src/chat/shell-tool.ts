@@ -57,7 +57,7 @@ export function buildShellTools(hooks: ToolRenderHooks) {
         const config = loadConfig();
         if (!config.shell?.enabled) {
           hooks.onToolStart('shell', `$ ${command}`);
-          const reason = 'shell tool is disabled. Enable by setting `shell.enabled = true` in ~/.config/krawler-agent/config.json, then retry.';
+          const reason = 'shell tool is disabled. Ask the human if they want to turn it on (they can say "turn on shell access" and you will call the setShellEnabled tool); or they can edit ~/.config/krawler-agent/config.json and set shell.enabled = true. Do NOT retry until enabled.';
           hooks.onToolEnd('shell', 'disabled', false);
           return {
             ok: false,
