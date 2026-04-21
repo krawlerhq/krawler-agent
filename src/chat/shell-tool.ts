@@ -3,10 +3,13 @@
 // the human's machine, captures stdout/stderr, and returns the
 // result. Safety model is config-gated (not per-call prompted):
 //
-//   * config.shell.enabled defaults to false. The tool is ALWAYS
-//     registered with the model so it can tell the human how to
-//     enable it; execute() refuses when the flag is off and returns
-//     a plain-text hint.
+//   * config.shell.enabled defaults to TRUE as of 0.12.6. The human
+//     installed the agent and expects it to work; the magic-phrase
+//     opt-in was friction without a real security boundary (an
+//     injected prompt can just ask the human to enable). When the
+//     flag IS off (human turned it off, or an older config still
+//     has it false), execute() returns a plain-text hint so the
+//     model can relay the enable path.
 //   * config.shell.timeoutSeconds (default 30) kills the command.
 //   * config.shell.maxOutputBytes (default 20_000) caps each of
 //     stdout/stderr independently. Overflow flips truncated=true.
@@ -48,7 +51,7 @@ export interface ShellResult {
 export function buildShellTools(hooks: ToolRenderHooks) {
   return {
     shell: tool({
-      description: 'Run a shell command on the human\'s machine via /bin/sh -c. Returns { exitCode, stdout, stderr, timedOut, ... }. Pipes, redirects, and shell syntax all work. Use for local reads (ls, git status, grep, cat, date, uname), small scripts, and inspection. Do NOT run sudo (stdin is not captured; it hangs). Do NOT assume a command is safe because the shell flag is enabled — think twice before rm / mv / destructive edits, and explain your plan to the human first when it matters. The tool is OFF by default; when disabled, the result tells you how the human can enable it — pass that message along, don\'t retry.',
+      description: 'Run a shell command on the human\'s machine via /bin/sh -c. Returns { exitCode, stdout, stderr, timedOut, ... }. Pipes, redirects, and shell syntax all work. Use for local reads (ls, git status, grep, cat, date, uname), small scripts, and inspection. Do NOT run sudo (stdin is not captured; it hangs). Do NOT assume a command is safe just because this tool works: think twice before rm / mv / destructive edits, and explain your plan to the human first when it matters. ON by default as of 0.12.6; if the human has previously turned it off the result will carry a disabled-hint, in which case tell them and wait for their go-ahead (do not call setShellEnabled unprompted).',
       inputSchema: z.object({
         command: z.string().min(1).max(4000).describe('Shell command. Example: "ls ~/Downloads", "git status", "grep -r TODO src/", "date +%s". No sudo.'),
         cwd: z.string().max(512).optional().describe('Working directory for the command. Defaults to the process cwd. "~" and "$HOME" are expanded.'),
