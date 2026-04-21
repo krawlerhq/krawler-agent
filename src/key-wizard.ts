@@ -18,7 +18,7 @@
 // config (provider choice, cadence, dry-run, model) stays on
 // krawler.com/agent/<handle>/settings modal.
 
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import open from 'open';
 
@@ -28,7 +28,16 @@ import type { SharedKeys } from './config.js';
 export interface WizardResult {
   saved: boolean;
   keys: SharedKeys;
+  url: string;
 }
+
+// Preferred fixed ports for the key wizard. Using a short fixed list means a
+// user who missed the auto-opened tab (or closed it before pasting) can just
+// type http://127.0.0.1:4137 and get back to the form. The fallback to a
+// random port kicks in only when all three are already bound (e.g. two CLIs
+// racing). 4137-4139 are not in the well-known-ports list and not claimed by
+// any service we know about.
+export const PREFERRED_WIZARD_PORTS = [4137, 4138, 4139] as const;
 
 // Render the key-form HTML. All styles inline so a user doesn't need
 // krawler.com reachable to see a polished page. Existing keys render
@@ -161,6 +170,36 @@ function renderPage(existing: SharedKeys): string {
 </html>`;
 }
 
+// Walk the preferred ports in order; return the first that binds. Falls
+// back to port 0 (OS-picked random) if every preferred port is taken, so
+// two parallel CLI invocations on the same machine never deadlock each
+// other. Returns the bound port so the caller can log the exact URL.
+async function bindServer(server: Server): Promise<number> {
+  for (const port of PREFERRED_WIZARD_PORTS) {
+    const bound = await new Promise<boolean>((resolve) => {
+      const onError = (err: NodeJS.ErrnoException) => {
+        server.off('listening', onListen);
+        if (err.code === 'EADDRINUSE' || err.code === 'EACCES') resolve(false);
+        else resolve(false);
+      };
+      const onListen = () => {
+        server.off('error', onError);
+        resolve(true);
+      };
+      server.once('error', onError);
+      server.once('listening', onListen);
+      server.listen(port, '127.0.0.1');
+    });
+    if (bound) return port;
+  }
+  // All preferred ports busy; let the OS pick one.
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve());
+  });
+  const addr = server.address() as AddressInfo | null;
+  return addr?.port ?? 0;
+}
+
 // Start the ephemeral key-wizard server, open the browser, and
 // return a promise that resolves when the user clicks Save or Skip
 // (or after a 30-min idle timeout).
@@ -202,7 +241,7 @@ export function startKeyWizard(): Promise<WizardResult> {
             const merged = saveSharedKeys(updates);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ ok: true }));
-            finish({ saved: true, keys: merged });
+            finish({ saved: true, keys: merged, url: resolvedUrl });
           } catch (e) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ error: (e as Error).message }));
@@ -213,12 +252,13 @@ export function startKeyWizard(): Promise<WizardResult> {
       if (req.method === 'POST' && req.url === '/skip') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
-        finish({ saved: false, keys: existing });
+        finish({ saved: false, keys: existing, url: resolvedUrl });
         return;
       }
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('not found');
     });
+    let resolvedUrl = '';
     function finish(result: WizardResult): void {
       if (settled) return;
       settled = true;
@@ -226,20 +266,19 @@ export function startKeyWizard(): Promise<WizardResult> {
       setTimeout(() => { try { server.close(); } catch { /* ignore */ } }, 400);
       resolve(result);
     }
-    // Bind to 127.0.0.1:0 so the OS picks a free port. Avoids
-    // collisions with the 0.5.x dashboard port (8717) still running
-    // on some installs, and any other local service.
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address() as AddressInfo | null;
-      if (!addr) { finish({ saved: false, keys: existing }); return; }
-      const url = `http://127.0.0.1:${addr.port}/`;
+    void (async () => {
+      const port = await bindServer(server);
+      const url = `http://127.0.0.1:${port}/`;
+      resolvedUrl = url;
       // eslint-disable-next-line no-console
       console.log(`  \u{1F511} provider keys needed. opening ${url}`);
+      // eslint-disable-next-line no-console
+      console.log(`     if it didn't open, paste that URL in your browser.`);
       void open(url).catch(() => { /* best-effort */ });
-    });
-    // 30-minute safety timeout — close the port even if the user
+    })();
+    // 30-minute safety timeout. Close the port even if the user
     // wandered away, so we don't leak a listener.
-    setTimeout(() => finish({ saved: false, keys: existing }), 30 * 60 * 1000);
+    setTimeout(() => finish({ saved: false, keys: existing, url: resolvedUrl }), 30 * 60 * 1000);
   });
 }
 

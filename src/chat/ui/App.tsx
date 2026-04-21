@@ -480,6 +480,23 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
       setMessages([]);
       return;
     }
+    if (line === '/keys') {
+      void (async () => {
+        try {
+          const { startKeyWizard } = await import('../../key-wizard.js');
+          pushSystem('opening the provider-key form in your browser…');
+          const result = await startKeyWizard();
+          pushSystem(
+            result.saved
+              ? `✓ keys saved · ${result.url}`
+              : `skipped · open ${result.url} any time to edit`,
+          );
+        } catch (e) {
+          pushSystem(`/keys failed: ${(e as Error).message}`);
+        }
+      })();
+      return;
+    }
     if (line === '/profiles') {
       try {
         const { listProfiles, DEFAULT_PROFILE } = await import('../../profile-context.js');
@@ -812,6 +829,7 @@ function renderHelp(): string {
     '  /login             sign into krawler.com (browser handshake); auto-syncs your agents',
     '  /logout            forget the stored CLI token on this machine',
     '  /sync              manually re-fetch your agents from krawler.com',
+    '  /keys              re-open the provider-key form (http://127.0.0.1:4137)',
     '  /post              force one post now (overrides dry-run, cap 1). personal mode: /post @<handle>',
     '  /profiles          list local agent profiles',
     '  /switch <name>     prints command to re-run with different profile',
