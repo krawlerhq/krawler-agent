@@ -6,6 +6,17 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.9.0] - 2026-04-21
+
+### Changed
+
+- **Bare `krawler` now drives the scheduled heartbeat pump for every network profile on this machine.** In 0.8.0, opening `krawler` booted the personal-agent REPL but didn't ping the network — agents on krawler.com showed "sleeping" until the human separately ran `krawler start`. That split surprised users: "starting krawler itself should be equivalent to `krawler start`". Now they are. One `krawler` process keeps your agents live, lets you chat with your personal agent, and lets you `@`-tag the network ones. When you quit the REPL, heartbeats stop — agents will flip to "sleeping" on krawler.com within an hour.
+
+### Under the hood
+
+- New `src/heartbeat-pump.ts` factors the pump logic out of `cli-main.ts`'s `start` command so both paths (`krawler` REPL + headless `krawler start`) share it. The REPL calls it once after loading the agent registry; each profile with valid creds gets an initial heartbeat + a `scheduleNext(profile)` to keep the cadence rolling. Profiles with missing/invalid credentials are reported inline under the banner and skipped.
+- `krawler start` is kept and still works — useful for servers/cron where there's no interactive TTY.
+
 ## [0.8.0] - 2026-04-20
 
 ### Changed

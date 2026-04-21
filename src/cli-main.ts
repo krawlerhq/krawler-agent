@@ -10,6 +10,7 @@ import open from 'open';
 import { getActiveCredentials, getConfigPath, loadConfig, loadPairToken, readActivityLog, redactConfig, savePairToken } from './config.js';
 import { DEFAULT_PROFILE, currentProfileName, listProfiles, withProfile } from './profile-context.js';
 import { postNow, runHeartbeat, scheduleNext, stopSchedule } from './loop.js';
+import { startHeartbeatPump } from './heartbeat-pump.js';
 import { KrawlerClient } from './krawler.js';
 import { registerPlaybookCommands } from './playbooks/cli.js';
 import { registerInstalledSkillCommands } from './installed-skill-cli.js';
@@ -148,76 +149,32 @@ program
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
 
-    // Single process, multiple profiles. If --profile X is passed, run
-    // just X. Otherwise enumerate every profile with a config.json on
-    // disk; if none, fall back to the default profile so the CLI has
-    // SOMETHING to work with on a fresh install (the human still needs
-    // to paste a Krawler key into config.json or run `krawler login`).
     const requestedProfile = opts.profile && opts.profile.trim();
-    const profiles = requestedProfile
-      ? [requestedProfile]
-      : listProfiles();
-    if (profiles.length === 0) profiles.push(DEFAULT_PROFILE);
 
     // eslint-disable-next-line no-console
     console.log(`🕸️  Krawler Agent v${pkg.version}`);
     // eslint-disable-next-line no-console
-    console.log(`   profiles: ${profiles.length}  (${profiles.join(', ')})`);
-    // eslint-disable-next-line no-console
     console.log(`   manage at: https://krawler.com/agent/<handle>  (linked installs + runtime config)`);
 
-    for (const profile of profiles) {
-      await withProfile(profile, async () => {
-        const config = loadConfig();
-        const creds = getActiveCredentials(config);
-        const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
-        const hasKrawlerKey = Boolean(config.krawlerApiKey);
-
+    // Delegates to the shared pump helper so bare `krawler` and
+    // `krawler start` drive the same scheduling code.
+    const statuses = await startHeartbeatPump({
+      profile: requestedProfile || undefined,
+      onProfileStatus: (s) => {
         // eslint-disable-next-line no-console
-        console.log(`\n   [${profile}] config ${getConfigPath()}`);
-
-        if (!hasKrawlerKey || !hasModelCreds) {
-          const missing = [
-            hasKrawlerKey ? null : 'krawler key',
-            hasModelCreds ? null : `${config.provider} creds`,
-          ].filter(Boolean).join(' + ');
+        console.log(`\n   [${s.profile}] config ${getConfigPath()}`);
+        if (s.state === 'idle') {
           // eslint-disable-next-line no-console
-          console.log(`   [${profile}] ⚠  idle — missing ${missing}. Paste keys into ${getConfigPath()} or run \`krawler login --profile ${profile}\`.`);
+          console.log(`   [${s.profile}] ⚠  idle — ${s.reason}. Paste keys into ${getConfigPath()} or run \`krawler login --profile ${s.profile}\`.`);
           return;
         }
-
-        const id = await resolveIdentity();
-        if (!id.ok) {
-          // eslint-disable-next-line no-console
-          console.log(`   [${profile}] ⚠  idle — /me failed: ${id.reason}`);
-          return;
-        }
-        if (id.placeholder) {
-          const failures = recentIdentityClaimFailures();
-          if (failures.length > 0) {
-            // eslint-disable-next-line no-console
-            console.log(renderStuckBanner(profile, id.handle, failures));
-          } else {
-            // eslint-disable-next-line no-console
-            console.log(`   [${profile}] \u2139  @${id.handle} is a placeholder; the agent will claim a real identity on first cycle. If this line still shows next time you start, run 'krawler logs' and check the model key.`);
-          }
-        }
-
         // eslint-disable-next-line no-console
-        console.log(`   [${profile}] ✓ @${id.handle}${id.displayName ? ` (${id.displayName})` : ''} · ${config.provider}/${config.model} · every ${config.cadenceMinutes} min${config.dryRun ? ' · dry-run' : ''}`);
-
-        // Fire one heartbeat now, then arm the cadence for this profile.
-        // Each runHeartbeat + scheduleNext runs inside withProfile so
-        // filesystem paths resolve to this profile's dir.
-        void withProfile(profile, async () => {
-          try { await runHeartbeat('scheduled'); } catch { /* logged */ }
-          await scheduleNext(profile);
-        });
-      });
-    }
-
+        console.log(`   [${s.profile}] ✓ @${s.handle}${s.displayName ? ` (${s.displayName})` : ''} · ${s.provider}/${s.model} · every ${s.cadenceMinutes} min${s.dryRun ? ' · dry-run' : ''}`);
+      },
+    });
+    const pumping = statuses.filter((s) => s.state === 'pumping').length;
     // eslint-disable-next-line no-console
-    console.log('\n   heartbeats run while this process lives. Ctrl+C to sleep all profiles.\n');
+    console.log(`\n   heartbeats run for ${pumping} profile${pumping === 1 ? '' : 's'} while this process lives. Ctrl+C to sleep all.\n`);
   });
 
 program
