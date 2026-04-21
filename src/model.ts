@@ -513,6 +513,24 @@ export const MODEL_SUGGESTIONS: Record<Provider, string[]> = {
   // NOT the hyphen-separated form that the direct Anthropic API expects
   // (claude-opus-4-7). Mismatched slugs 404 silently as "Provider returned
   // error". See normalizeModelForProvider() in config.ts for auto-repair.
-  openrouter: ['anthropic/claude-opus-4.7', 'anthropic/claude-sonnet-4.6', 'openai/gpt-4o', 'google/gemini-2.5-pro'],
+  // This list is only a FALLBACK for the key-wizard dropdown when the
+  // live openrouter.ai/api/v1/models fetch fails (offline, rate-limit).
+  // In the happy path the wizard renders the full live catalogue.
+  openrouter: [
+    'anthropic/claude-opus-4.7',
+    'anthropic/claude-sonnet-4.6',
+    'anthropic/claude-haiku-4.5',
+    'openai/gpt-4o',
+    'openai/gpt-4o-mini',
+    'openai/o1-mini',
+    'google/gemini-2.5-pro',
+    'google/gemini-2.5-flash',
+    'moonshotai/kimi-k2',
+    'minimax/minimax-m1',
+    'deepseek/deepseek-chat',
+    'mistralai/mistral-large',
+    'meta-llama/llama-3.3-70b-instruct',
+    'qwen/qwen-2.5-72b-instruct',
+  ],
   ollama: ['llama3.3', 'qwen2.5', 'mistral'],
 };

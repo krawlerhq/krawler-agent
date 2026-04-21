@@ -1,29 +1,36 @@
-// Local one-page HTML wizard for first-time provider-key paste.
+// Local one-page HTML wizard for provider keys + active-model picker.
 //
 // Why this exists: provider API keys (Anthropic/OpenAI/Google/OpenRouter,
 // plus the Ollama base URL) live in ~/.config/krawler-agent/shared-keys.json.
 // Storing them locally is the right call — krawler.com never sees them,
 // which keeps the privacy promise intact. But hand-editing JSON to paste
-// a fresh sk-ant-... every time is not a first-run UX we want.
+// a fresh sk-ant-... every time is not a first-run UX we want. Same
+// story for "which model is this agent talking to right now": Opus 4.7
+// is expensive, OpenRouter has 100s of cheaper alternatives, and forcing
+// the user to type slugs from memory doesn't respect their time.
 //
-// So: on first run, if shared-keys.json has no populated key, the CLI
-// spawns a tiny HTTP server on 127.0.0.1:<random-port>, opens the
-// browser to it, and serves one self-contained HTML page with a key
-// form. User pastes, clicks Save, we write shared-keys.json and shut
-// the server down. Auto-timeout at 30 min so a wandered-off user
-// doesn't leave a listening port open forever.
+// So: the CLI spawns a tiny HTTP server on 127.0.0.1:4242 and serves
+// one self-contained HTML page with (a) provider + model selectors,
+// (b) key inputs. For OpenRouter the model <select> is populated live
+// from https://openrouter.ai/api/v1/models (proxied through this
+// server, cached 1 hour) so the full catalogue is one click away.
+// User clicks Save, we write shared-keys.json + the active profile's
+// config.json, page self-closes.
 //
-// Scope is DELIBERATELY tight. This is NOT the 0.6.0 settings
-// dashboard coming back. It's only for provider keys — runtime
-// config (provider choice, cadence, dry-run, model) stays on
-// krawler.com/agent/<handle>/settings modal.
+// Scope is DELIBERATELY still tight. This is NOT the 0.6.0 settings
+// dashboard coming back — runtime config like cadence, dry-run,
+// behaviour toggles stays on krawler.com/agent/<handle>/settings.
+// Only provider/model lives here because you cannot pick a model
+// without also having a key for that model's provider; coupling them
+// in one form makes "paste key + pick model + go" one motion.
 
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import open from 'open';
 
-import { loadSharedKeys, saveSharedKeys } from './config.js';
-import type { SharedKeys } from './config.js';
+import { loadConfig, loadSharedKeys, normalizeModelForProvider, PROVIDERS, saveConfig, saveSharedKeys } from './config.js';
+import type { Provider, SharedKeys } from './config.js';
+import { MODEL_SUGGESTIONS } from './model.js';
 
 export interface WizardResult {
   saved: boolean;
@@ -39,11 +46,13 @@ export interface WizardResult {
 // http://127.0.0.1:4242 to get back to the form.
 export const PREFERRED_WIZARD_PORTS = [4242, 4243, 4244] as const;
 
-// Render the key-form HTML. All styles inline so a user doesn't need
+// Render the wizard HTML. All styles inline so a user doesn't need
 // krawler.com reachable to see a polished page. Existing keys render
 // as placeholders (masked) so the user knows which slots are already
-// set — they can leave those blank to keep them.
-function renderPage(existing: SharedKeys): string {
+// set — they can leave those blank to keep them. The active provider
+// and model come from the CURRENT profile's config.json so the form
+// opens on whatever the agent is actively using right now.
+function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel: string, activeProfile: string): string {
   const mask = (k: string): string => {
     if (!k) return '';
     if (k.length < 10) return '\u2022\u2022\u2022\u2022\u2022';
@@ -62,6 +71,14 @@ function renderPage(existing: SharedKeys): string {
       ${f.existing ? `<div class="hint">currently: <code>${f.existing}</code> \u00b7 leave blank to keep</div>` : ''}
     </div>
   `).join('');
+  const providerOptions = PROVIDERS
+    .map((p) => `<option value="${p}"${p === activeProvider ? ' selected' : ''}>${providerLabel(p)}</option>`)
+    .join('');
+  // The model <select> is rebuilt client-side whenever the provider
+  // changes. We seed it with the active model as a single option so the
+  // form is valid even before the JS hydration runs (and so "Save"
+  // without touching anything is a true no-op on model).
+  const fallbackMap = JSON.stringify(MODEL_SUGGESTIONS);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -87,8 +104,12 @@ function renderPage(existing: SharedKeys): string {
     .sub { color: var(--text-2); font-size: 0.9rem; margin: 0 0 24px; line-height: 1.5; }
     .row { margin-bottom: 16px; }
     label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; color: var(--text-2); }
-    input[type=password], input[type=text], input[type=url] { width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 0.92rem; background: var(--surface); font-family: var(--mono); }
-    input:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
+    input[type=password], input[type=text], input[type=url], select { width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 0.92rem; background: var(--surface); font-family: var(--mono); }
+    input:focus, select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
+    h2 { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); margin: 24px 0 10px; }
+    h2:first-of-type { margin-top: 0; }
+    .pair { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: end; }
+    @media (max-width: 480px) { .pair { grid-template-columns: 1fr; } }
     .hint { font-size: 0.75rem; color: var(--text-3); margin-top: 4px; }
     .hint code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); }
     .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
@@ -104,13 +125,27 @@ function renderPage(existing: SharedKeys): string {
 </head>
 <body>
   <div class="card">
-    <h1>Krawler \u2014 provider keys</h1>
-    <p class="sub">Paste at least one key so your local agent can call a model. Keys never leave this machine \u2014 they write to <code style="font-family:var(--mono);">~/.config/krawler-agent/shared-keys.json</code>.</p>
+    <h1>Krawler \u2014 agent settings</h1>
+    <p class="sub">Pick the model your agent talks to, and paste the key for that provider. Keys never leave this machine (they write to <code style="font-family:var(--mono);">~/.config/krawler-agent/shared-keys.json</code>). Model choice is saved per profile (currently <code>${activeProfile}</code>).</p>
     <!-- method=post is belt-and-suspenders: even if the JS handler
          somehow no-ops, native submission won't dump the keys into a
          GET query string (which is what happened in 0.10.0 because the
          JS function was named 'submit', colliding with HTMLFormElement.submit). -->
     <form id="keyForm" method="post" action="/save" autocomplete="off">
+      <h2>Active model</h2>
+      <div class="pair">
+        <div class="row" style="margin-bottom:0;">
+          <label for="provider">Provider</label>
+          <select id="provider" name="provider">${providerOptions}</select>
+        </div>
+        <div class="row" style="margin-bottom:0;">
+          <label for="model">Model</label>
+          <select id="model" name="model"><option value="${escapeHtml(activeModel)}" selected>${escapeHtml(activeModel) || '(pick a provider first)'}</option></select>
+          <div class="hint" id="modelHint">Tip: for OpenRouter, options are sorted cheapest-first. Kimi, MiniMax, DeepSeek, Llama &amp; Qwen are usually the best value.</div>
+        </div>
+      </div>
+
+      <h2>API keys</h2>
       ${fieldHtml}
       <div class="row">
         <label for="ollamaBaseUrl">Ollama base URL</label>
@@ -119,11 +154,11 @@ function renderPage(existing: SharedKeys): string {
       </div>
       <div class="actions">
         <button type="button" class="secondary" id="skipBtn">Skip</button>
-        <button type="submit" class="primary" id="saveBtn">Save keys</button>
+        <button type="submit" class="primary" id="saveBtn">Save</button>
       </div>
     </form>
     <div class="status" id="status"></div>
-    <footer>This page is served by your local <code>krawler</code> process. Come back to <code>http://127.0.0.1:4242/</code> any time (or type <code>/keys</code> in the chat) to add or rotate keys.</footer>
+    <footer>This page is served by your local <code>krawler</code> process. Come back to <code>http://127.0.0.1:4242/</code> any time (or type <code>/keys</code> in the chat) to rotate keys or switch models.</footer>
   </div>
   <script>
     // Handlers attached via addEventListener rather than inline
@@ -135,10 +170,69 @@ function renderPage(existing: SharedKeys): string {
       const form = document.getElementById('keyForm');
       const skipBtn = document.getElementById('skipBtn');
       const status = document.getElementById('status');
+      const providerSel = document.getElementById('provider');
+      const modelSel = document.getElementById('model');
+      const modelHint = document.getElementById('modelHint');
+      const FALLBACK = ${fallbackMap};
+      const ACTIVE_MODEL = ${JSON.stringify(activeModel)};
       function setStatus(msg, kind) {
         status.className = 'status' + (kind ? ' ' + kind : '');
         status.textContent = msg;
       }
+      function fmtPrice(p) {
+        // Openrouter prices are string USD per token; convert to per 1M.
+        const n = Number(p);
+        if (!Number.isFinite(n) || n <= 0) return 'free';
+        return '$' + (n * 1e6).toFixed(2) + '/M';
+      }
+      function setOptions(items, selected) {
+        modelSel.innerHTML = '';
+        for (const it of items) {
+          const opt = document.createElement('option');
+          opt.value = it.id;
+          opt.textContent = it.label;
+          if (it.id === selected) opt.selected = true;
+          modelSel.appendChild(opt);
+        }
+        // If the active model isn't in the list (e.g. a custom slug),
+        // add it at the top so saving doesn't silently overwrite it.
+        if (selected && !Array.from(modelSel.options).some(function (o) { return o.value === selected; })) {
+          const keep = document.createElement('option');
+          keep.value = selected;
+          keep.textContent = selected + ' (current)';
+          keep.selected = true;
+          modelSel.insertBefore(keep, modelSel.firstChild);
+        }
+      }
+      async function loadModelsFor(provider) {
+        const fallback = (FALLBACK[provider] || []).map(function (id) { return { id: id, label: id }; });
+        if (provider !== 'openrouter') {
+          setOptions(fallback, ACTIVE_MODEL);
+          modelHint.textContent = 'Suggestions for ' + provider + '. Custom slugs still work — edit config.json if the one you want is not listed.';
+          return;
+        }
+        modelHint.textContent = 'loading OpenRouter catalogue\u2026';
+        try {
+          const res = await fetch('/openrouter-models', { cache: 'no-store' });
+          if (!res.ok) throw new Error('http ' + res.status);
+          const payload = await res.json();
+          const items = (payload.models || []).map(function (m) {
+            const inPrice = m.pricing && m.pricing.prompt;
+            const outPrice = m.pricing && m.pricing.completion;
+            const priceLabel = inPrice != null ? ' \u00b7 in ' + fmtPrice(inPrice) + ' / out ' + fmtPrice(outPrice) : '';
+            const ctx = m.context_length ? ' \u00b7 ' + Math.round(m.context_length / 1000) + 'k ctx' : '';
+            return { id: m.id, label: (m.name || m.id) + priceLabel + ctx, sort: Number(inPrice || 0) };
+          });
+          items.sort(function (a, b) { return a.sort - b.sort; });
+          setOptions(items, ACTIVE_MODEL);
+          modelHint.textContent = items.length + ' OpenRouter models, sorted cheapest first. Type to search.';
+        } catch (err) {
+          setOptions(fallback, ACTIVE_MODEL);
+          modelHint.textContent = 'live fetch failed (' + (err.message || 'unknown') + ') \u2014 showing fallback list.';
+        }
+      }
+      providerSel.addEventListener('change', function () { loadModelsFor(providerSel.value); });
+      loadModelsFor(providerSel.value);
       form.addEventListener('submit', async function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -152,8 +246,10 @@ function renderPage(existing: SharedKeys): string {
         try {
           const res = await fetch('/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
           if (!res.ok) throw new Error('save failed');
-          setStatus('\u2713 saved. You can close this tab and return to the terminal.', 'ok');
-          setTimeout(function () { try { window.close(); } catch (e) {} }, 1200);
+          const body = await res.json().catch(function () { return {}; });
+          const suffix = body && body.model ? ' model: ' + body.model : '';
+          setStatus('\u2713 saved.' + suffix + ' You can close this tab and return to the terminal.', 'ok');
+          setTimeout(function () { try { window.close(); } catch (e) {} }, 1500);
         } catch (err) {
           setStatus('save failed: ' + (err.message || 'unknown'), 'err');
         }
@@ -161,13 +257,73 @@ function renderPage(existing: SharedKeys): string {
       });
       skipBtn.addEventListener('click', async function () {
         try { await fetch('/skip', { method: 'POST' }); } catch (e) {}
-        setStatus('skipped. The CLI will wait for keys in shared-keys.json.');
+        setStatus('skipped.');
         setTimeout(function () { try { window.close(); } catch (e) {} }, 800);
       });
     })();
   </script>
 </body>
 </html>`;
+}
+
+function providerLabel(p: Provider): string {
+  switch (p) {
+    case 'anthropic': return 'Anthropic';
+    case 'openai': return 'OpenAI';
+    case 'google': return 'Google';
+    case 'openrouter': return 'OpenRouter (100s of models)';
+    case 'ollama': return 'Ollama (local)';
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// In-memory cache of the OpenRouter model catalogue. The upstream
+// endpoint is public (no key required) but we still proxy through here
+// so the browser page stays fully local-only and doesn't depend on
+// CORS headers. 1-hour TTL is generous — new models land often but not
+// by-the-minute, and the wizard is long-lived (one server per CLI
+// lifetime), so the alternative of per-GET fetches would flap over the
+// same data. Set TTL to 0 to disable the cache during debugging.
+interface OpenRouterModel {
+  id: string;
+  name?: string;
+  context_length?: number;
+  pricing?: { prompt?: string; completion?: string };
+}
+const OPENROUTER_CACHE_TTL_MS = 60 * 60 * 1000;
+const openrouterCache: { fetchedAt: number; models: OpenRouterModel[] } = { fetchedAt: 0, models: [] };
+let openrouterInflight: Promise<OpenRouterModel[]> | null = null;
+
+async function fetchOpenRouterModels(): Promise<OpenRouterModel[]> {
+  const now = Date.now();
+  if (openrouterCache.models.length > 0 && now - openrouterCache.fetchedAt < OPENROUTER_CACHE_TTL_MS) {
+    return openrouterCache.models;
+  }
+  if (openrouterInflight) return openrouterInflight;
+  openrouterInflight = (async () => {
+    try {
+      const res = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { 'Accept': 'application/json' },
+      });
+      if (!res.ok) throw new Error(`openrouter models http ${res.status}`);
+      const payload = (await res.json()) as { data?: OpenRouterModel[] };
+      const models = Array.isArray(payload.data) ? payload.data : [];
+      openrouterCache.fetchedAt = Date.now();
+      openrouterCache.models = models;
+      return models;
+    } finally {
+      openrouterInflight = null;
+    }
+  })();
+  return openrouterInflight;
 }
 
 // Walk the preferred ports in order; return the first that binds. Falls
@@ -210,11 +366,19 @@ const serverState: {
   server: Server | null;
   port: number;
   url: string;
+  // Active profile name at wizard-boot time. Shown in the header copy
+  // so the human knows which agent they're about to reconfigure (the
+  // model they pick here writes to THIS profile's config.json, not the
+  // default). Profile is a process-level setting — a single CLI
+  // process ever runs as one profile — so capturing it once at server
+  // start is correct. (Per-request currentProfileName() would work
+  // inside withProfile scopes but the HTTP handler runs outside them.)
+  profile: string;
   // One-shot listeners that resolve on the NEXT /save or /skip. Used by
   // the first-run waiter below so the CLI can block on "please paste a
   // key" until the user either does or skips.
   waiters: Array<(result: WizardResult) => void>;
-} = { server: null, port: 0, url: '', waiters: [] };
+} = { server: null, port: 0, url: '', profile: 'default', waiters: [] };
 
 function handleRequest(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): void {
   // Strip query string. If a GET hits / with ?anthropicApiKey=... in
@@ -224,10 +388,11 @@ function handleRequest(req: import('node:http').IncomingMessage, res: import('no
   // depth alongside the client-side fix.
   const urlPath = (req.url || '').split('?')[0];
   if (req.method === 'GET' && (urlPath === '/' || urlPath === '/index.html')) {
-    // Re-read keys on every GET so the masked placeholders reflect the
-    // current on-disk state (useful if the user edited keys out-of-band
-    // between page loads).
-    const body = renderPage(loadSharedKeys());
+    // Re-read keys + config on every GET so the form reflects current
+    // on-disk state (useful if the user edited values out-of-band
+    // between page loads, or switched profiles via env var).
+    const cfg = loadConfig();
+    const body = renderPage(loadSharedKeys(), cfg.provider, cfg.model, serverState.profile);
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
@@ -235,12 +400,29 @@ function handleRequest(req: import('node:http').IncomingMessage, res: import('no
     res.end(body);
     return;
   }
+  if (req.method === 'GET' && urlPath === '/openrouter-models') {
+    // Serve the cached OpenRouter catalogue as JSON for the client-side
+    // dropdown hydration. Proxying (instead of fetching directly from
+    // the browser) keeps the page self-contained and makes caching
+    // server-side where it's useful across tabs/reloads.
+    void (async () => {
+      try {
+        const models = await fetchOpenRouterModels();
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+        res.end(JSON.stringify({ models }));
+      } catch (e) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: (e as Error).message, models: [] }));
+      }
+    })();
+    return;
+  }
   if (req.method === 'POST' && req.url === '/save') {
     let raw = '';
-    req.on('data', (chunk) => { raw += chunk.toString('utf8'); if (raw.length > 8192) req.destroy(); });
+    req.on('data', (chunk) => { raw += chunk.toString('utf8'); if (raw.length > 16384) req.destroy(); });
     req.on('end', () => {
       try {
-        const obj = JSON.parse(raw || '{}') as Partial<SharedKeys>;
+        const obj = JSON.parse(raw || '{}') as Partial<SharedKeys> & { provider?: string; model?: string };
         const updates: Partial<SharedKeys> = {};
         if (obj.anthropicApiKey)  updates.anthropicApiKey  = String(obj.anthropicApiKey).trim();
         if (obj.openaiApiKey)     updates.openaiApiKey     = String(obj.openaiApiKey).trim();
@@ -250,11 +432,30 @@ function handleRequest(req: import('node:http').IncomingMessage, res: import('no
           const v = String(obj.ollamaBaseUrl).trim();
           try { new URL(v); updates.ollamaBaseUrl = v; } catch { /* ignore bad URL */ }
         }
-        const merged = saveSharedKeys(updates);
+        const mergedKeys = saveSharedKeys(updates);
+
+        // Provider/model route to the active profile's config.json.
+        // Normalize so that an openrouter-style dotted slug picked
+        // while provider=anthropic gets rewritten for the direct API
+        // (and vice versa) — same repair path loadConfig() already
+        // does, just at write time so the on-disk file is clean.
+        let mergedProvider: Provider | undefined;
+        let mergedModel: string | undefined;
+        const wantsProvider = typeof obj.provider === 'string' && (PROVIDERS as readonly string[]).includes(obj.provider);
+        const wantsModel = typeof obj.model === 'string' && obj.model.trim().length > 0;
+        if (wantsProvider || wantsModel) {
+          const current = loadConfig();
+          const nextProvider: Provider = wantsProvider ? (obj.provider as Provider) : current.provider;
+          const nextModelRaw = wantsModel ? String(obj.model).trim() : current.model;
+          const nextModel = normalizeModelForProvider(nextProvider, nextModelRaw);
+          const saved = saveConfig({ provider: nextProvider, model: nextModel });
+          mergedProvider = saved.provider;
+          mergedModel = saved.model;
+        }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true }));
+        res.end(JSON.stringify({ ok: true, provider: mergedProvider, model: mergedModel }));
         const waiters = serverState.waiters.splice(0);
-        for (const w of waiters) w({ saved: true, keys: merged, url: serverState.url });
+        for (const w of waiters) w({ saved: true, keys: mergedKeys, url: serverState.url });
       } catch (e) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: (e as Error).message }));
@@ -280,6 +481,12 @@ export async function ensureSettingsServer(): Promise<{ port: number; url: strin
   if (serverState.server) {
     return { port: serverState.port, url: serverState.url };
   }
+  // Capture the profile the wizard is bound to. Imported here (not at
+  // top level) to keep the dependency on profile-context localised —
+  // the rest of this file doesn't need to know the current profile,
+  // only handleRequest does, via serverState.
+  const { currentProfileName } = await import('./profile-context.js');
+  serverState.profile = currentProfileName();
   const server = createServer(handleRequest);
   // Silence 'error' event if the server hits trouble while already
   // listening (would otherwise crash the process). Binding errors are
