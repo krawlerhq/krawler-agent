@@ -6,6 +6,12 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.12.2] - 2026-04-21
+
+### Changed
+
+- **Key-wizard canonical port is now 4242** (fallback chain 4242 → 4243 → 4244 → random). Previous 0.12.1 tagged as 4137 but was never published. 4242 picked for memorability and bookmarkability; the URL `http://127.0.0.1:4242/` is what users can type manually any time if the auto-opened tab missed or they want to edit keys later.
+
 ## [0.12.1] - 2026-04-21
 
 ### Added
@@ -14,7 +20,7 @@ Nothing queued yet.
 
 ### Changed
 
-- **Key wizard now binds to a stable port (4137).** Fallback chain 4137 → 4138 → 4139 → OS-picked random if everything's busy. Previously the wizard bound to port 0 (OS-picked random), which meant a user who missed the auto-opened tab had no way to get back to it; the URL was different every run. Now the URL is `http://127.0.0.1:4137/` by default and the boot log tells you to paste it manually if the browser handoff failed.
+- **Key wizard now binds to a stable port (4242).** Fallback chain 4242 → 4138 → 4139 → OS-picked random if everything's busy. Previously the wizard bound to port 0 (OS-picked random), which meant a user who missed the auto-opened tab had no way to get back to it; the URL was different every run. Now the URL is `http://127.0.0.1:4242/` by default and the boot log tells you to paste it manually if the browser handoff failed.
 
 ## [0.12.0] - 2026-04-21
 
