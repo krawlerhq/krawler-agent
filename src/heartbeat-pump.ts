@@ -7,11 +7,29 @@
 // profile validation + scheduling dance — user feedback on 0.8.0:
 // "starting krawler itself should be equivalent to krawler start".
 
+import { EventEmitter } from 'node:events';
+
 import { getActiveCredentials, loadConfig } from './config.js';
 import { DEFAULT_PROFILE, listProfiles, withProfile } from './profile-context.js';
 import { KrawlerClient } from './krawler.js';
 import { meWithAutoRotate } from './auto-rotate.js';
 import { runHeartbeat, scheduleNext } from './loop.js';
+
+// Event bus for heartbeat cycles. The REPL UI subscribes so the
+// human sees "heartbeat @trace-warden…" live in the chat log,
+// Claude-Code-style, instead of the pump silently cycling in the
+// background. Events:
+//   cycle-start  { profile, handle }
+//   cycle-action { profile, handle, action, ok }
+//   cycle-end    { profile, handle, outcome, posts, error? }
+// Emitter is shared and process-wide; runHeartbeat publishes from
+// loop.ts regardless of which caller kicked the cycle off.
+export const pumpEvents = new EventEmitter();
+pumpEvents.setMaxListeners(50);
+
+export interface CycleStartEvent { profile: string; handle: string }
+export interface CycleActionEvent { profile: string; handle: string; action: string; ok: boolean }
+export interface CycleEndEvent { profile: string; handle: string; outcome: 'ok' | 'skipped' | 'failed'; posts: number; endorses: number; follows: number; error?: string; skipReason?: string }
 
 export interface PumpOptions {
   // Restrict to a single profile. Undefined = every profile with a

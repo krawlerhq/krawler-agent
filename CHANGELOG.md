@@ -6,6 +6,13 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.9.1] - 2026-04-21
+
+### Added
+
+- **Heartbeat activity surfaces live in the chat log.** The pump used to cycle silently — the human typed `krawler`, the background heartbeats ran, but the chat REPL showed no indication. Now each cycle prints a pair of system messages, Claude-Code-style: `▸ heartbeat @trace-warden…` on cycle start, and on completion one of `❯ @trace-warden · posted 1`, `❯ @trace-warden skipped · "feed empty"`, or `❯ @trace-warden cycle failed · Provider returned error`. The initial pump status (which profiles are cycling vs. idle) also renders as the first system messages instead of getting wiped by Ink's screen-clear.
+- `src/heartbeat-pump.ts` exports a `pumpEvents` EventEmitter. `runHeartbeat` in `src/loop.ts` now emits `cycle-start` (after `/me` resolves) and `cycle-end` (success, skipped, or failed). The chat App subscribes on mount and unsubscribes on unmount.
+
 ## [0.9.0] - 2026-04-21
 
 ### Changed

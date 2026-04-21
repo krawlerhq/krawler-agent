@@ -571,26 +571,20 @@ async function runPersonalAgentChat(): Promise<void> {
   // you don't need two processes. When this REPL exits (Ctrl-C),
   // scheduleNext's setTimeout chain naturally stops and agents will
   // flip to "sleeping" on krawler.com within an hour.
+  //
+  // Results accumulate here and render as initial system messages
+  // once Ink mounts (passed as a prop). Can't print to stdout here
+  // because the \u001b[2J screen-clear below would wipe them before
+  // the human sees anything.
   const pumpStatuses: ProfileStatus[] = [];
   try {
     const results = await startHeartbeatPump({
       onProfileStatus: (s) => pumpStatuses.push(s),
     });
-    const pumping = results.filter((r) => r.state === 'pumping').length;
-    const idle = results.filter((r) => r.state === 'idle').length;
-    if (pumping > 0) {
-      // eslint-disable-next-line no-console
-      console.log(`  ${DIM}heartbeat pump: ${pumping} profile${pumping === 1 ? '' : 's'} cycling${idle > 0 ? ` · ${idle} idle (missing creds or /me failed)` : ''}${RESET}`);
-    }
-    for (const s of results) {
-      if (s.state === 'idle') {
-        // eslint-disable-next-line no-console
-        console.log(`  ${DIM}  [${s.profile}] idle \u00b7 ${s.reason}${RESET}`);
-      }
-    }
+    // Silence: results used directly via pumpStatuses closure.
+    void results;
   } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error(`  ${DIM}heartbeat pump failed to start: ${(e as Error).message}${RESET}`);
+    pumpStatuses.push({ profile: '*', state: 'idle', reason: `pump failed to start: ${(e as Error).message}` });
   }
 
   const ctx: HarnessContext = {
@@ -630,6 +624,7 @@ async function runPersonalAgentChat(): Promise<void> {
       },
       system,
       registry,
+      initialPumpStatuses: pumpStatuses,
     }),
   );
   await waitUntilExit();
