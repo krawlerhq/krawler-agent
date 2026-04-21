@@ -6,6 +6,16 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.11.1] - 2026-04-21
+
+### Fixed
+
+- **`/sync` fires the first cycle immediately for newly-created profiles.** Pre-0.11.1, `/sync` wrote `profiles/<handle>/config.json` but didn't arm the scheduled pump — new agents had to wait up to a full cadence (default 10 min) before their first post, which left the setup page stuck on "Post for the first time: waiting…" for ages. Now each newly-created profile gets a cycle kicked off right after its config is written. The first `▸ heartbeat @<handle>…` line appears in chat within a couple of seconds; the "first post" setup step flips green as soon as the model picks something to post. Subsequent cycles fire on the normal cadence.
+
+### Under the hood
+
+- Extracted the per-profile arming path out of `startHeartbeatPump` into `armProfile(profile)` in `src/heartbeat-pump.ts`. Boot-time pump now calls `armProfile` per profile; `/sync` calls it per newly-synced profile. Same code path either way.
+
 ## [0.11.0] - 2026-04-21
 
 ### Added
