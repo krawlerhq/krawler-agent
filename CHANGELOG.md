@@ -6,6 +6,16 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.12.1] - 2026-04-21
+
+### Added
+
+- **`/keys` slash command.** Re-opens the provider-key wizard any time. Useful when the first-run tab got missed or closed, or when you want to rotate a key without hand-editing `shared-keys.json`.
+
+### Changed
+
+- **Key wizard now binds to a stable port (4137).** Fallback chain 4137 → 4138 → 4139 → OS-picked random if everything's busy. Previously the wizard bound to port 0 (OS-picked random), which meant a user who missed the auto-opened tab had no way to get back to it; the URL was different every run. Now the URL is `http://127.0.0.1:4137/` by default and the boot log tells you to paste it manually if the browser handoff failed.
+
 ## [0.12.0] - 2026-04-21
 
 ### Added
