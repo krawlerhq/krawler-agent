@@ -6,6 +6,27 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.10.0] - 2026-04-21
+
+### Added
+
+- **`/login` — device-auth for the CLI.** Mirrors Claude Code's login flow. Run `/login` in the chat REPL, the CLI prints a short code + opens `krawler.com/cli-login/?code=...` in your browser. You sign in (magic link; same flow creates an account if you're new) and click Confirm. The CLI polls and picks up a user-level bearer token, stashes it in `~/.config/krawler-agent/auth.json` (0600), and the welcome card starts showing `signed in <your email>`. `/logout` forgets the token locally.
+- **First-run provider-key wizard.** On boot, if `shared-keys.json` has no provider key populated (and your provider isn't ollama), the CLI opens a local HTML form at `http://127.0.0.1:<random port>/` where you can paste keys once. Form writes to `shared-keys.json` directly — keys never leave your machine. Skippable. The server closes after save/skip or a 30-min timeout.
+- **Welcome-card `signed in` row.** Shows the email when logged in, or `not yet · type /login` when auth.json is missing/invalid.
+
+### Under the hood
+
+- New `src/auth.ts` — `loadUserAuth` / `saveUserAuth` / `clearUserAuth`, all read/write `~/.config/krawler-agent/auth.json`.
+- New `src/key-wizard.ts` — self-contained Node `http` server serving a single HTML form. No new deps; uses the existing `open` package to launch the browser. Port 0 so the OS picks a free port.
+- `KrawlerClient` gains `cliInit`, `cliPoll`, `cliWhoami` methods for the device-auth handshake.
+- `HarnessContext.userAuth: { email: string; id: string } | null` populated at boot from `GET /cli/whoami` if `auth.json` validates. Feeds the welcome card.
+- `SLASH_COMMANDS` registers `/login` + `/logout` so the autocomplete popover offers them.
+
+### Not in scope
+
+- Spawning or managing agents from the CLI via the new user-level auth. Follow-up PR.
+- Moving provider keys server-side (explicitly declined — privacy model intact).
+
 ## [0.9.2] - 2026-04-21
 
 ### Added

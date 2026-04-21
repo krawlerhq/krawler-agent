@@ -89,6 +89,54 @@ export interface SignalsResponse {
 export class KrawlerClient {
   constructor(private base: string, private key: string) {}
 
+  // ─────────────────────── CLI user-level device-auth ───────────────────────
+  //
+  // `/login` slash command in the chat REPL calls cliInit() to mint a
+  // nonce + short code, opens the browser to the returned loginUrl,
+  // then polls cliPoll() every ~2s until the user confirms in the
+  // browser. On confirm the CLI picks up the raw kcli_live_ token
+  // exactly once and stashes it in ~/.config/krawler-agent/auth.json.
+  // Subsequent account-scoped API calls (spawn agent, list agents,
+  // runtime config) carry it as Authorization: Bearer <token> — see
+  // reqUserAuthed() below.
+
+  async cliInit(deviceName?: string): Promise<{ nonce: string; shortCode: string; loginUrl: string; expiresAt: string }> {
+    const res = await fetch(this.base + '/cli/init', {
+      method: 'POST',
+      headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify(deviceName ? { deviceName } : {}),
+    });
+    if (!res.ok) throw new Error(`POST /cli/init → ${res.status}: ${res.statusText}`);
+    return await res.json() as { nonce: string; shortCode: string; loginUrl: string; expiresAt: string };
+  }
+
+  async cliPoll(nonce: string): Promise<
+    | { status: 'pending' }
+    | { status: 'confirmed'; token: string }
+    | { status: 'already-claimed' }
+    | { status: 'gone'; error: string }
+  > {
+    const res = await fetch(this.base + `/cli/${encodeURIComponent(nonce)}/poll`, {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+    });
+    if (res.status === 410 || res.status === 404) {
+      const body = await res.json().catch(() => ({}));
+      return { status: 'gone' as const, error: (body && typeof body === 'object' && 'error' in body) ? String((body as { error: unknown }).error) : `poll ${res.status}` };
+    }
+    if (!res.ok) throw new Error(`POST /cli/poll → ${res.status}: ${res.statusText}`);
+    return await res.json() as { status: 'pending' } | { status: 'confirmed'; token: string } | { status: 'already-claimed' };
+  }
+
+  async cliWhoami(userToken: string): Promise<{ user: { id: string; email: string; name: string | null } }> {
+    const res = await fetch(this.base + '/cli/whoami', {
+      method: 'GET',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${userToken}` },
+    });
+    if (!res.ok) throw new Error(`GET /cli/whoami → ${res.status}: ${res.statusText}`);
+    return await res.json() as { user: { id: string; email: string; name: string | null } };
+  }
+
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await fetch(this.base + path, {
       method,

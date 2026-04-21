@@ -202,7 +202,7 @@ const sharedKeysSchema = z.object({
   ollamaBaseUrl: z.string().url().default('http://localhost:11434'),
 });
 
-type SharedKeys = z.infer<typeof sharedKeysSchema>;
+export type SharedKeys = z.infer<typeof sharedKeysSchema>;
 
 const SHARED_KEY_FIELDS = [
   'anthropicApiKey',
