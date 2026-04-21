@@ -123,7 +123,7 @@ function renderPage(existing: SharedKeys): string {
       </div>
     </form>
     <div class="status" id="status"></div>
-    <footer>You'll see this screen once. To edit keys later, hand-edit the JSON or re-run <code>krawler</code> with an empty shared-keys.json.</footer>
+    <footer>This page is served by your local <code>krawler</code> process. Come back to <code>http://127.0.0.1:4242/</code> any time (or type <code>/keys</code> in the chat) to add or rotate keys.</footer>
   </div>
   <script>
     // Handlers attached via addEventListener rather than inline
@@ -200,85 +200,141 @@ async function bindServer(server: Server): Promise<number> {
   return addr?.port ?? 0;
 }
 
-// Start the ephemeral key-wizard server, open the browser, and
-// return a promise that resolves when the user clicks Save or Skip
-// (or after a 30-min idle timeout).
-export function startKeyWizard(): Promise<WizardResult> {
-  return new Promise<WizardResult>((resolve) => {
-    const existing = loadSharedKeys();
-    let settled = false;
-    const server = createServer((req, res) => {
-      // Strip query string. If a GET hits / with ?anthropicApiKey=... in
-      // the URL, that's the 0.10.0 bug (native form submit via GET
-      // leaking keys into the URL bar). We serve the page anyway so
-      // the user sees the form, but we never treat URL params as a
-      // save. Defense in depth alongside the client-side fix.
-      const urlPath = (req.url || '').split('?')[0];
-      if (req.method === 'GET' && (urlPath === '/' || urlPath === '/index.html')) {
-        const body = renderPage(existing);
-        res.writeHead(200, {
-          'Content-Type': 'text/html; charset=utf-8',
-          'Cache-Control': 'no-store',
-        });
-        res.end(body);
-        return;
-      }
-      if (req.method === 'POST' && req.url === '/save') {
-        let raw = '';
-        req.on('data', (chunk) => { raw += chunk.toString('utf8'); if (raw.length > 8192) req.destroy(); });
-        req.on('end', () => {
-          try {
-            const obj = JSON.parse(raw || '{}') as Partial<SharedKeys>;
-            const updates: Partial<SharedKeys> = {};
-            if (obj.anthropicApiKey)  updates.anthropicApiKey  = String(obj.anthropicApiKey).trim();
-            if (obj.openaiApiKey)     updates.openaiApiKey     = String(obj.openaiApiKey).trim();
-            if (obj.googleApiKey)     updates.googleApiKey     = String(obj.googleApiKey).trim();
-            if (obj.openrouterApiKey) updates.openrouterApiKey = String(obj.openrouterApiKey).trim();
-            if (obj.ollamaBaseUrl) {
-              const v = String(obj.ollamaBaseUrl).trim();
-              try { new URL(v); updates.ollamaBaseUrl = v; } catch { /* ignore bad URL */ }
-            }
-            const merged = saveSharedKeys(updates);
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ ok: true }));
-            finish({ saved: true, keys: merged, url: resolvedUrl });
-          } catch (e) {
-            res.writeHead(400, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: (e as Error).message }));
-          }
-        });
-        return;
-      }
-      if (req.method === 'POST' && req.url === '/skip') {
+// Module-level settings-server state. The server stays alive for the
+// lifetime of the CLI process so a user can always navigate to
+// http://127.0.0.1:4242/ to edit keys, not just on first boot. Previous
+// behaviour (ephemeral server that closed on save/skip/timeout) meant
+// typing the URL after first-run just returned ERR_CONNECTION_REFUSED,
+// which defeated the point of documenting a stable bookmarkable URL.
+const serverState: {
+  server: Server | null;
+  port: number;
+  url: string;
+  // One-shot listeners that resolve on the NEXT /save or /skip. Used by
+  // the first-run waiter below so the CLI can block on "please paste a
+  // key" until the user either does or skips.
+  waiters: Array<(result: WizardResult) => void>;
+} = { server: null, port: 0, url: '', waiters: [] };
+
+function handleRequest(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse): void {
+  // Strip query string. If a GET hits / with ?anthropicApiKey=... in
+  // the URL, that's the 0.10.0 bug (native form submit via GET leaking
+  // keys into the URL bar). We serve the page anyway so the user sees
+  // the form, but we never treat URL params as a save. Defense in
+  // depth alongside the client-side fix.
+  const urlPath = (req.url || '').split('?')[0];
+  if (req.method === 'GET' && (urlPath === '/' || urlPath === '/index.html')) {
+    // Re-read keys on every GET so the masked placeholders reflect the
+    // current on-disk state (useful if the user edited keys out-of-band
+    // between page loads).
+    const body = renderPage(loadSharedKeys());
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(body);
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/save') {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk.toString('utf8'); if (raw.length > 8192) req.destroy(); });
+    req.on('end', () => {
+      try {
+        const obj = JSON.parse(raw || '{}') as Partial<SharedKeys>;
+        const updates: Partial<SharedKeys> = {};
+        if (obj.anthropicApiKey)  updates.anthropicApiKey  = String(obj.anthropicApiKey).trim();
+        if (obj.openaiApiKey)     updates.openaiApiKey     = String(obj.openaiApiKey).trim();
+        if (obj.googleApiKey)     updates.googleApiKey     = String(obj.googleApiKey).trim();
+        if (obj.openrouterApiKey) updates.openrouterApiKey = String(obj.openrouterApiKey).trim();
+        if (obj.ollamaBaseUrl) {
+          const v = String(obj.ollamaBaseUrl).trim();
+          try { new URL(v); updates.ollamaBaseUrl = v; } catch { /* ignore bad URL */ }
+        }
+        const merged = saveSharedKeys(updates);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
-        finish({ saved: false, keys: existing, url: resolvedUrl });
-        return;
+        const waiters = serverState.waiters.splice(0);
+        for (const w of waiters) w({ saved: true, keys: merged, url: serverState.url });
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: (e as Error).message }));
       }
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('not found');
     });
-    let resolvedUrl = '';
-    function finish(result: WizardResult): void {
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/skip') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    const waiters = serverState.waiters.splice(0);
+    for (const w of waiters) w({ saved: false, keys: loadSharedKeys(), url: serverState.url });
+    return;
+  }
+  res.writeHead(404, { 'Content-Type': 'text/plain' });
+  res.end('not found');
+}
+
+// Ensure the always-on settings server is running. Safe to call many
+// times — subsequent calls just return the cached state. Called from the
+// REPL boot path so the URL is reachable for the whole session.
+export async function ensureSettingsServer(): Promise<{ port: number; url: string }> {
+  if (serverState.server) {
+    return { port: serverState.port, url: serverState.url };
+  }
+  const server = createServer(handleRequest);
+  // Silence 'error' event if the server hits trouble while already
+  // listening (would otherwise crash the process). Binding errors are
+  // caught inside bindServer's per-attempt promises.
+  server.on('error', () => { /* swallow post-bind errors */ });
+  const port = await bindServer(server);
+  serverState.server = server;
+  serverState.port = port;
+  serverState.url = `http://127.0.0.1:${port}/`;
+  // Clean shutdown on process exit so the port frees up for the next
+  // run. Node clears listeners on exit anyway, but being explicit is
+  // cheaper than debugging a "port already in use" on the next boot
+  // when the shell's parent signalled odd.
+  const shutdown = () => { try { server.close(); } catch { /* ignore */ } };
+  process.once('exit', shutdown);
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+  return { port, url: serverState.url };
+}
+
+// Open the running settings form in the browser. No-op if the server
+// isn't running yet; caller should ensureSettingsServer() first.
+export async function openSettingsBrowser(): Promise<{ url: string }> {
+  const { url } = await ensureSettingsServer();
+  void open(url).catch(() => { /* best-effort */ });
+  return { url };
+}
+
+// First-run gate. If no provider key is set, this opens the browser and
+// blocks until the user clicks Save or Skip, or until the 30-min timeout
+// fires. The underlying server stays up after resolution (unlike the
+// pre-0.12.3 behaviour that closed it), so `/keys` and manual URL
+// navigation keep working for the whole session.
+export function startKeyWizard(): Promise<WizardResult> {
+  return new Promise<WizardResult>((resolve) => {
+    let settled = false;
+    const settle = (result: WizardResult) => {
       if (settled) return;
       settled = true;
-      // Delay close so the client can read the final response.
-      setTimeout(() => { try { server.close(); } catch { /* ignore */ } }, 400);
       resolve(result);
-    }
+    };
     void (async () => {
-      const port = await bindServer(server);
-      const url = `http://127.0.0.1:${port}/`;
-      resolvedUrl = url;
+      const existing = loadSharedKeys();
+      const { url } = await ensureSettingsServer();
       // eslint-disable-next-line no-console
       console.log(`  \u{1F511} provider keys needed. opening ${url}`);
       // eslint-disable-next-line no-console
       console.log(`     if it didn't open, paste that URL in your browser.`);
       void open(url).catch(() => { /* best-effort */ });
+      serverState.waiters.push((result) => settle(result));
+      // 30-minute safety. Resolve with an empty result so the REPL can
+      // continue rather than blocking forever if the user walks away.
+      // The server itself stays alive regardless.
+      setTimeout(() => settle({ saved: false, keys: existing, url }), 30 * 60 * 1000);
     })();
-    // 30-minute safety timeout. Close the port even if the user
-    // wandered away, so we don't leak a listener.
-    setTimeout(() => finish({ saved: false, keys: existing, url: resolvedUrl }), 30 * 60 * 1000);
   });
 }
 

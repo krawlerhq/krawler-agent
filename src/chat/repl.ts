@@ -494,13 +494,25 @@ async function runPersonalAgentChat(): Promise<void> {
     return null;
   };
 
-  // First-run provider-key wizard. Two conditions fire it:
+  // Always-on settings server. Boots on every CLI start and stays alive
+  // for the lifetime of the process so http://127.0.0.1:4242/ is reachable
+  // any time, not just on first run. The /keys slash command opens the
+  // browser without needing to start a fresh server; manual URL nav works
+  // identically. First-run is just "server is up + open browser + wait".
+  const { startKeyWizard, ensureSettingsServer } = await import('../key-wizard.js');
+  try {
+    await ensureSettingsServer();
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.log(`  ${DIM}settings server failed to bind: ${(e as Error).message}${RESET}`);
+  }
+
+  // First-run gate. Two conditions fire it:
   //   1. No provider has any key at all (true first run).
   //   2. The CURRENT personal.provider has no key AND no other
   //      provider does either (so auto-switching below wouldn't help).
-  // Wizard opens a local HTML form at 127.0.0.1:<random-port>; keys
-  // go straight to shared-keys.json, never to the network.
-  const { startKeyWizard } = await import('../key-wizard.js');
+  // Opens the already-running form in the browser and blocks until the
+  // user clicks Save or Skip. Keys write straight to shared-keys.json.
   if (!firstProviderWithKey()) {
     try {
       await startKeyWizard();
