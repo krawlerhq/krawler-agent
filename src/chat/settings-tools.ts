@@ -159,6 +159,32 @@ export function buildSettingsTools(_settingsUrlIgnored: string | null, profile: 
       },
     }),
 
+    setShellEnabled: tool({
+      description: 'Enable or disable the shell tool on the human\'s machine. When enabled, YOU (the agent) can run commands via /bin/sh -c. This is a LOCAL-machine setting: it writes to this install\'s config.json only, never synced server-side. Call this when the human explicitly says "turn on shell", "enable shell access", "let me run commands", etc. Do NOT call it unprompted. When enabling, warn the human once that you will be able to run arbitrary shell commands on their machine and to say so if anything looks wrong; then proceed.',
+      inputSchema: z.object({
+        enabled: z.boolean(),
+      }),
+      execute: async ({ enabled }) => {
+        hooks.onToolStart('setShellEnabled', `shell access ${enabled ? 'on' : 'off'}`);
+        try {
+          withProfile(profile, () => {
+            const cfg = loadConfig();
+            const shell = {
+              enabled,
+              timeoutSeconds: cfg.shell?.timeoutSeconds ?? 30,
+              maxOutputBytes: cfg.shell?.maxOutputBytes ?? 20_000,
+            };
+            saveConfig({ ...cfg, shell });
+          });
+          hooks.onToolEnd('setShellEnabled', 'ok (local)', true);
+          return { ok: true, enabled, target: 'local' };
+        } catch (e) {
+          hooks.onToolEnd('setShellEnabled', `failed: ${(e as Error).message}`, false);
+          throw e;
+        }
+      },
+    }),
+
     listInstalledSkills: tool({
       description: 'List every SKILL.md this agent has installed under its profile, with slug, origin url, body size, install time, and whether the local copy has diverged from the upstream (edited).',
       inputSchema: z.object({}),
