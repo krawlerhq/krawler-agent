@@ -450,29 +450,67 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
       pushSystem(`to switch profile: Ctrl+C, then run \`krawler --profile ${want}\``);
       return;
     }
-    if (line === '/post') {
-      if (ctx.mode !== 'network') {
-        pushSystem('`/post` only works when chatting AS a Krawler network agent. Try `@<handle> post about X` to route through one of your network agents, or `krawler --profile <name>` to open that agent directly.');
+    if (line.startsWith('/post')) {
+      // Three shapes:
+      //   /post                  network mode: fire for the current
+      //                          profile. Personal mode: print usage.
+      //   /post @<handle>        fire for the named network profile.
+      //                          Works from either mode.
+      //   /post @<handle> blah   (future) seed the model with blah.
+      //                          Not yet supported; treat as the above
+      //                          and ignore the trailing text.
+      const m = /^\/post(?:\s+@(\S+))?(?:\s+.*)?$/.exec(line);
+      const targetHandleArg = (m && m[1]) ? m[1] : null;
+      if (!targetHandleArg && ctx.mode !== 'network') {
+        const known = ctx.mentionables.map((x) => `@${x.handle}`).join(', ');
+        pushSystem(
+          `\`/post\` needs an agent to post as. Usage:\n  /post @<handle>${known ? `\n\nyour agents: ${known}` : '\n\nyou have no other network agents on this machine. Spawn one at https://krawler.com/agents/.'}`,
+        );
         return;
       }
       if (heartbeatInflight.current) {
         pushSystem('another cycle is already in flight — wait for it');
         return;
       }
+
+      // Resolve target profile. Two paths:
+      //   targetHandleArg set: look up in mentionables → profile name
+      //   network mode, no arg: use currentProfileName (the /profile session)
+      let targetProfile: string | null = null;
+      let targetHandleLabel = ctx.handle ?? '';
+      if (targetHandleArg) {
+        const match = ctx.mentionables.find((x) => x.handle.toLowerCase() === targetHandleArg.toLowerCase());
+        if (!match) {
+          const known = ctx.mentionables.map((x) => `@${x.handle}`).join(', ');
+          pushSystem(`no agent @${targetHandleArg} — your agents here: ${known || 'none yet'}`);
+          return;
+        }
+        targetProfile = match.profile;
+        targetHandleLabel = match.handle;
+      }
+
       heartbeatInflight.current = true;
       setMode('heartbeat');
-      pushSystem('❯ forcing a post (dry-run off, cap 1)…');
+      pushSystem(`❯ forcing a post for @${targetHandleLabel} (dry-run off, cap 1)…`);
       try {
         const { postNow } = await import('../../loop.js');
-        const { summary } = await postNow();
+        let summary: string;
+        if (targetProfile) {
+          const { withProfile } = await import('../../profile-context.js');
+          const result = await withProfile(targetProfile, () => postNow()) as { summary: string };
+          summary = result.summary;
+        } else {
+          const result = await postNow();
+          summary = result.summary;
+        }
         const s = parseSummary(summary);
         if (s.posts > 0) {
-          pushSystem(`❯ posted ✓ · check your agent on krawler.com`);
+          pushSystem(`❯ @${targetHandleLabel} posted ✓ · check krawler.com/agent/${targetHandleLabel}`);
           consecutiveNoPostCycles.current = 0;
         } else if (s.skipReason) {
-          pushSystem(`❯ model chose not to post · "${s.skipReason}". Try prompting directly ("post about X").`);
+          pushSystem(`❯ @${targetHandleLabel} chose not to post · "${s.skipReason}". Try prompting directly.`);
         } else {
-          pushSystem(`❯ no post made · ${summary}`);
+          pushSystem(`❯ @${targetHandleLabel} no post made · ${summary}`);
         }
       } catch (e) {
         pushSystem(`❯ /post failed: ${(e as Error).message}`);
@@ -724,7 +762,7 @@ function renderHelp(): string {
     '  /help, /?          this list',
     '  /login             sign into krawler.com (browser handshake)',
     '  /logout            forget the stored CLI token on this machine',
-    '  /post              force one post now (overrides dry-run, cap 1)',
+    '  /post              force one post now (overrides dry-run, cap 1). personal mode: /post @<handle>',
     '  /profiles          list local agent profiles',
     '  /switch <name>     prints command to re-run with different profile',
     '  /clear             clear the visible scrollback',
