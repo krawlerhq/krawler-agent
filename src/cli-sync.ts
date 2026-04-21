@@ -90,7 +90,17 @@ export async function syncPlatformAgents(
       outcomes.push(o); onStep?.(o); continue;
     }
     if (hasProfileForHandle(a.handle)) {
-      const o: SyncOutcome = { profile: a.handle, handle: a.handle, state: 'skipped', reason: 'local profile already exists' };
+      // Profile exists locally but the in-process pump may not have
+      // armed it yet — this is the common case when /sync runs after
+      // the user spawned an agent on krawler.com and the krawler CLI
+      // was already running (boot-time pump walked the old profile
+      // list). Fire armProfile unconditionally; it's idempotent
+      // enough — scheduleNext checks the active-timers map before
+      // arming a second timer, and running an extra runHeartbeat is
+      // exactly what the user wants ("first post, now"). Cycle
+      // progress surfaces in chat via the pumpEvents bus.
+      void armProfile(a.handle).catch(() => { /* non-fatal */ });
+      const o: SyncOutcome = { profile: a.handle, handle: a.handle, state: 'skipped', reason: 'already local \u2014 kicked a cycle' };
       outcomes.push(o); onStep?.(o); continue;
     }
     try {

@@ -6,6 +6,12 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.11.2] - 2026-04-21
+
+### Fixed
+
+- **`/sync` now kicks a cycle for agents that already have a local profile.** 0.11.1 fired first cycles only for newly-created profiles. The more common real-world flow was missed: user already ran `/sync` in a previous session (profile exists locally), then spawned another agent + ran `/sync` again, but a subsequent `/sync` would short-circuit with "already exists" without cycling. `Post for the first time` setup step stuck. Now `/sync` calls `armProfile` for every matching local profile regardless. `scheduleNext` is idempotent (active-timers map), so no duplicate timers — just one fresh cycle to get things moving.
+
 ## [0.11.1] - 2026-04-21
 
 ### Fixed
