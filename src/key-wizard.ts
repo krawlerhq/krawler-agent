@@ -31,13 +31,13 @@ export interface WizardResult {
   url: string;
 }
 
-// Preferred fixed ports for the key wizard. Using a short fixed list means a
-// user who missed the auto-opened tab (or closed it before pasting) can just
-// type http://127.0.0.1:4137 and get back to the form. The fallback to a
-// random port kicks in only when all three are already bound (e.g. two CLIs
-// racing). 4137-4139 are not in the well-known-ports list and not claimed by
-// any service we know about.
-export const PREFERRED_WIZARD_PORTS = [4137, 4138, 4139] as const;
+// Preferred fixed ports for the key wizard. 4242 is the canonical, stable,
+// bookmarkable URL; 4243 and 4244 are fallbacks for the rare case of two
+// concurrent CLIs on one machine. Dropping to an OS-picked random port is
+// the final fallback so parallel installs never deadlock. Documenting 4242
+// lets a user who missed the auto-opened tab just type
+// http://127.0.0.1:4242 to get back to the form.
+export const PREFERRED_WIZARD_PORTS = [4242, 4243, 4244] as const;
 
 // Render the key-form HTML. All styles inline so a user doesn't need
 // krawler.com reachable to see a polished page. Existing keys render
