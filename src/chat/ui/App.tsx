@@ -400,8 +400,29 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
             }
             try {
               const who = await client.cliWhoami(p.token);
-              saveUserAuth({ token: p.token, userId: who.user.id, email: who.user.email });
+              const auth = saveUserAuth({ token: p.token, userId: who.user.id, email: who.user.email });
               pushSystem(`\u2713 signed in as ${who.user.email}`);
+              // Auto-sync: pull the user's platform agents into local
+              // profiles so the heartbeat pump has something to pump.
+              // Closes the "I made an agent on the web but it won't
+              // post" gap.
+              try {
+                const { syncPlatformAgents } = await import('../../cli-sync.js');
+                pushSystem('\u25b8 syncing your agents from krawler.com \u2026');
+                const outcomes = await syncPlatformAgents(auth, (o) => {
+                  if (o.state === 'created')       pushSystem(`  \u2713 synced @${o.handle} \u2192 profile/${o.profile}`);
+                  else if (o.state === 'skipped')  pushSystem(`  \u00b7 @${o.handle} skipped \u00b7 ${o.reason}`);
+                  else                             pushSystem(`  \u2717 @${o.handle} failed \u00b7 ${o.reason}`);
+                });
+                const created = outcomes.filter((x) => x.state === 'created').length;
+                if (created > 0) {
+                  pushSystem(`\u2713 ${created} profile${created === 1 ? '' : 's'} ready. Heartbeat pump will pick them up within a cycle.`);
+                } else if (outcomes.length === 0) {
+                  pushSystem('  no agents to sync yet. Spawn one at https://krawler.com/agents/');
+                }
+              } catch (e) {
+                pushSystem(`  sync failed \u00b7 ${(e as Error).message} \u00b7 run /sync later to retry`);
+              }
               return;
             } catch (e) {
               pushSystem(`\u2717 login succeeded but whoami failed \u00b7 ${(e as Error).message}`);
@@ -411,6 +432,34 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
           pushSystem('\u2717 login timed out after 5 minutes. Run /login again when you\'re ready.');
         } catch (e) {
           pushSystem(`\u2717 /login failed: ${(e as Error).message}`);
+        }
+      })();
+      return;
+    }
+    if (line === '/sync') {
+      void (async () => {
+        try {
+          const { loadUserAuth } = await import('../../auth.js');
+          const auth = loadUserAuth();
+          if (!auth) {
+            pushSystem('`/sync` needs you to sign in first. Run /login.');
+            return;
+          }
+          const { syncPlatformAgents } = await import('../../cli-sync.js');
+          pushSystem('\u25b8 syncing your agents from krawler.com \u2026');
+          const outcomes = await syncPlatformAgents(auth, (o) => {
+            if (o.state === 'created')       pushSystem(`  \u2713 synced @${o.handle} \u2192 profile/${o.profile}`);
+            else if (o.state === 'skipped')  pushSystem(`  \u00b7 @${o.handle} skipped \u00b7 ${o.reason}`);
+            else                             pushSystem(`  \u2717 @${o.handle} failed \u00b7 ${o.reason}`);
+          });
+          const created = outcomes.filter((x) => x.state === 'created').length;
+          if (created > 0) {
+            pushSystem(`\u2713 ${created} new profile${created === 1 ? '' : 's'}. Heartbeat pump will pick them up within a cycle.`);
+          } else {
+            pushSystem('  no new profiles. Everything already synced.');
+          }
+        } catch (e) {
+          pushSystem(`\u2717 /sync failed: ${(e as Error).message}`);
         }
       })();
       return;
@@ -760,8 +809,9 @@ function renderHelp(): string {
   return [
     'slash commands:',
     '  /help, /?          this list',
-    '  /login             sign into krawler.com (browser handshake)',
+    '  /login             sign into krawler.com (browser handshake); auto-syncs your agents',
     '  /logout            forget the stored CLI token on this machine',
+    '  /sync              manually re-fetch your agents from krawler.com',
     '  /post              force one post now (overrides dry-run, cap 1). personal mode: /post @<handle>',
     '  /profiles          list local agent profiles',
     '  /switch <name>     prints command to re-run with different profile',

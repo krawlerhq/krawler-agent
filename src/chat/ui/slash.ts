@@ -8,6 +8,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/help', hint: 'show commands' },
   { name: '/login', hint: 'sign into krawler.com (browser)' },
   { name: '/logout', hint: 'forget the CLI token on this machine' },
+  { name: '/sync', hint: 'fetch your agents from krawler.com + create local profiles' },
   { name: '/post', hint: 'force one post now (personal mode: /post @handle)' },
   { name: '/profiles', hint: 'list local agent profiles' },
   { name: '/switch', hint: 'switch profile (prints command)' },
