@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { render } from 'ink';
 import React from 'react';
 
-import { getActiveCredentials, loadConfig, appendActivityLog, readActivityLog } from '../config.js';
+import { getActiveCredentials, loadConfig, appendActivityLog, readActivityLog, loadSharedKeys } from '../config.js';
 import { meWithAutoRotate } from '../auto-rotate.js';
 import { KrawlerClient } from '../krawler.js';
 import { fetchInstalledSkillsMd } from '../skill-refs.js';
@@ -27,6 +27,8 @@ import { App } from './ui/App.js';
 import type { HarnessContext } from './ui/types.js';
 import { buildSecondaryAgents } from './agents-registry.js';
 import type { AgentRegistry } from './agents-registry.js';
+import { getPersonalChatHistoryPath, loadPersonalConfig } from '../personal.js';
+import type { PersonalConfig } from '../personal.js';
 
 const DIM = '\u001b[2m';
 const RESET = '\u001b[0m';
@@ -250,11 +252,14 @@ function stripAnsi(s: string): string {
   return s.replace(/\u001b\[[0-9;]*m/g, '');
 }
 
+// Two modes. `krawler` (bare) opens the PERSONAL agent — a local,
+// off-network general assistant that uses the human's provider key
+// and has memory tools but no Krawler post/follow/endorse. `krawler
+// --profile <name>` opens a chat session AS that Krawler network
+// identity (the pre-0.8.0 default). KRAWLER_PROFILE is set by the
+// argv prelude in cli.ts, so checking the env var is the shortest
+// path to "was --profile explicit?".
 export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<void> {
-  // Ink uses terminal raw mode to capture keypresses. When stdin is
-  // piped or otherwise not a TTY (cron, CI, subprocess without a
-  // pty), raw mode can't be enabled and the REPL is unusable. Bail
-  // early with a friendly message instead of crashing mid-render.
   if (!process.stdin.isTTY) {
     // eslint-disable-next-line no-console
     console.error(
@@ -263,7 +268,14 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     );
     process.exit(1);
   }
+  if (process.env.KRAWLER_PROFILE) {
+    await runNetworkAgentChat(options);
+  } else {
+    await runPersonalAgentChat();
+  }
+}
 
+async function runNetworkAgentChat(_options: { noOpen?: boolean } = {}): Promise<void> {
   // 0.6 removed the local settings dashboard. The chat REPL used to
   // bind a Fastify server on :8717 and open the human's browser to it
   // for first-time key entry; now the human pastes keys into
@@ -411,6 +423,7 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     krawlerBaseUrl: config.krawlerBaseUrl,
     provider: config.provider,
     model: config.model,
+    mode: 'network',
     handle: me.handle,
     displayName: me.displayName ?? null,
     userName,
@@ -446,4 +459,181 @@ export async function runChatRepl(options: { noOpen?: boolean } = {}): Promise<v
     }),
   );
   await waitUntilExit();
+}
+
+// Personal-mode REPL. Opens the local, off-network general-purpose
+// assistant. No Krawler account required: just a provider key in
+// shared-keys.json. Every Krawler network identity the human has
+// spawned on this machine is @-addressable as a secondary.
+async function runPersonalAgentChat(): Promise<void> {
+  const settingsUrl: string | null = null;
+  const personal = loadPersonalConfig();
+  const shared = loadSharedKeys();
+
+  // Resolve the personal agent's provider credentials from the shared
+  // key store. Unlike network mode we DON'T require a Krawler key —
+  // the personal agent doesn't hit krawler.com.
+  const personalCreds = (): { apiKey: string; baseUrl?: string } => {
+    switch (personal.provider) {
+      case 'anthropic':  return { apiKey: shared.anthropicApiKey };
+      case 'openai':     return { apiKey: shared.openaiApiKey };
+      case 'google':     return { apiKey: shared.googleApiKey };
+      case 'openrouter': return { apiKey: shared.openrouterApiKey };
+      case 'ollama':     return { apiKey: '', baseUrl: shared.ollamaBaseUrl };
+    }
+  };
+  const credsOk = (): boolean => {
+    const c = personalCreds();
+    return personal.provider === 'ollama' ? Boolean(c.baseUrl) : Boolean(c.apiKey);
+  };
+  if (!credsOk()) {
+    // eslint-disable-next-line no-console
+    console.log(`  ${DIM}waiting for ${personal.provider} key in ~/.config/krawler-agent/shared-keys.json${RESET}`);
+    // eslint-disable-next-line no-console
+    console.log(`  ${DIM}  paste the key in the matching field, save, and we resume automatically${RESET}`);
+    await new Promise<void>((resolvePromise) => {
+      const tick = setInterval(() => {
+        // Re-read shared-keys on each tick so the human pasting into
+        // the file takes effect without us restarting.
+        const latest = loadSharedKeys();
+        Object.assign(shared, latest);
+        if (credsOk()) {
+          clearInterval(tick);
+          process.stdout.write(`  ${DIM}\u2713 credentials detected${RESET}\n\n`);
+          resolvePromise();
+        }
+      }, 3000);
+      process.once('SIGINT', () => {
+        clearInterval(tick);
+        process.stdout.write(`\n  ${DIM}aborted${RESET}\n`);
+        process.exit(0);
+      });
+    });
+  }
+  const creds = personalCreds();
+
+  // Human's name — same best-effort read as network mode, same
+  // memory.md location. Personal agent shares the user's memory with
+  // the default profile so facts like "my name is sd" are known to
+  // both contexts.
+  let userName: string | null = null;
+  try {
+    const { listFacts } = await import('./memory.js');
+    const facts = listFacts();
+    const nameFact = facts.find((f) => {
+      const k = f.key.toLowerCase();
+      return k === 'name' || k === 'user' || k === 'me';
+    });
+    if (nameFact && nameFact.body.trim()) {
+      userName = nameFact.body.trim().split(/[\s.,]/)[0] ?? null;
+    }
+  } catch { /* ignore */ }
+
+  // Build the @-addressable registry. In personal mode every network
+  // profile on disk (including the legacy "default" at ~/.config/
+  // krawler-agent/config.json) is a secondary — there's no primary to
+  // exclude. buildSecondaryAgents already filters out `primaryProfile`
+  // but we pass a sentinel that matches nothing on purpose.
+  const version = readOwnVersion();
+  let registry: AgentRegistry = { primaryProfile: '__personal__', byHandle: {} };
+  try {
+    registry = await buildSecondaryAgents('__personal__', async (otherProfile) => {
+      const otherConfig = loadConfig();
+      const otherKrawler = new KrawlerClient(otherConfig.krawlerBaseUrl, otherConfig.krawlerApiKey);
+      const { agent: otherMe } = await meWithAutoRotate(otherKrawler);
+      const directives = await fetchPrimeDirectives(otherConfig.krawlerBaseUrl);
+      const otherFacts: HarnessFacts = {
+        version,
+        settingsUrl,
+        profile: otherProfile,
+        krawlerBaseUrl: otherConfig.krawlerBaseUrl,
+        provider: otherConfig.provider,
+        model: otherConfig.model,
+      };
+      return buildSystemPrompt(
+        otherKrawler,
+        otherMe as { handle: string; displayName: string; bio: string | null; skillRefs?: unknown },
+        otherFacts,
+        directives,
+      );
+    });
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`  ${DIM}could not enumerate network agents (@-tagging disabled): ${(e as Error).message}${RESET}`);
+  }
+
+  const system = buildPersonalSystemPrompt(personal, userName, Object.values(registry.byHandle));
+
+  const ctx: HarnessContext = {
+    version,
+    settingsUrl,
+    profile: 'personal',
+    krawlerBaseUrl: '',
+    provider: personal.provider,
+    model: personal.model,
+    mode: 'personal',
+    handle: null,
+    displayName: personal.name,
+    userName,
+    historyPath: getPersonalChatHistoryPath(),
+    greeting: stripAnsi(greetingLine(userName)),
+    mentionables: Object.values(registry.byHandle).map((e) => ({
+      handle: e.handle,
+      displayName: e.displayName,
+      profile: e.profile,
+    })),
+  };
+
+  process.stdout.write('\u001b[2J\u001b[H');
+
+  const { waitUntilExit } = render(
+    React.createElement(App, {
+      ctx,
+      krawler: null,
+      driver: {
+        krawler: null,
+        provider: personal.provider,
+        modelName: personal.model,
+        apiKey: creds.apiKey,
+        ollamaBaseUrl: creds.baseUrl,
+        settingsUrl,
+        profileName: '__personal__',
+      },
+      system,
+      registry,
+    }),
+  );
+  await waitUntilExit();
+}
+
+// Simple, general-assistant system prompt for the personal agent. No
+// prime directives (those bind Krawler network identities, not this
+// local helper), no feed/activity injection (off-network), no
+// agent.md (personal has no Krawler skill document). Keeps the
+// context budget free for the conversation itself.
+function buildPersonalSystemPrompt(
+  personal: PersonalConfig,
+  userName: string | null,
+  mentionables: Array<{ handle: string; displayName: string | null }>,
+): string {
+  const who = userName ? `${userName}'s` : "the human's";
+  const mentionBlock = mentionables.length === 0
+    ? ''
+    : [
+        '',
+        'Network agents addressable from this chat (type `@<handle>` as the first token of a turn to route that one turn to them):',
+        ...mentionables.map((m) => `  @${m.handle}${m.displayName ? ` — ${m.displayName}` : ''}`),
+        'Those agents have their own voice, memory, and Krawler network tools (post/follow/endorse). When routed, they handle the turn — you step aside, you do not proxy.',
+      ].join('\n');
+  const memoryBlock = renderMemoryForPrompt() || '';
+  return [
+    `You are ${personal.name}, ${who} personal local AI assistant. You run inside the \`@krawlerhq/agent\` CLI on this machine. You are NOT a Krawler social-network identity: no handle, no followers, no feed. You are a general-purpose helper — answer questions, write code, draft, think out loud, remember.`,
+    '',
+    `Style: terse, direct, conversational. Short turns beat long ones. When you don't know, say so — don't bluff. Match the human's register.`,
+    '',
+    'Tools: memory (rememberFact, recallFacts, forgetFact) backed by markdown at ~/.config/krawler-agent/memory.md. Use rememberFact when the human tells you something stable (their name, a project, a decision). Do not remember chit-chat.',
+    mentionBlock,
+    '',
+    memoryBlock,
+  ].filter((s) => s !== '').join('\n');
 }

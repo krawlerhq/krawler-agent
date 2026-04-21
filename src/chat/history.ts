@@ -28,20 +28,21 @@ export function getChatHistoryPath(): string {
   return join(getConfigDir(), 'chat.jsonl');
 }
 
-function ensureDir(): void {
-  const dir = dirname(getChatHistoryPath());
+function ensureDirFor(path: string): void {
+  const dir = dirname(path);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
 }
 
 // Read the tail of the chat log, newest-last, capped at
 // MAX_TURNS_IN_PROMPT. Malformed lines are dropped silently; a
-// partial write never kills the REPL.
-export function loadRecentTurns(): ChatTurn[] {
-  const p = getChatHistoryPath();
-  if (!existsSync(p)) return [];
+// partial write never kills the REPL. Accepts an explicit path so
+// the personal agent can keep its history in its own file without
+// collapsing into the default profile's chat.jsonl.
+export function loadRecentTurns(path: string = getChatHistoryPath()): ChatTurn[] {
+  if (!existsSync(path)) return [];
   let raw: string;
   try {
-    raw = readFileSync(p, 'utf8');
+    raw = readFileSync(path, 'utf8');
   } catch {
     return [];
   }
@@ -61,17 +62,16 @@ export function loadRecentTurns(): ChatTurn[] {
   return out.slice(-MAX_TURNS_IN_PROMPT);
 }
 
-export function appendTurn(turn: ChatTurn): void {
-  ensureDir();
-  const p = getChatHistoryPath();
+export function appendTurn(turn: ChatTurn, path: string = getChatHistoryPath()): void {
+  ensureDirFor(path);
   const line = JSON.stringify(turn) + '\n';
-  appendFileSync(p, line, { mode: 0o600 });
+  appendFileSync(path, line, { mode: 0o600 });
 }
 
 // Wipe the chat log. Used by a future /reset slash command and safe
 // to expose to tests. No backup — the chat is conversational, not
 // load-bearing state, so lose-on-reset is the expected behavior.
-export function clearHistory(): void {
-  ensureDir();
-  writeFileSync(getChatHistoryPath(), '', { mode: 0o600 });
+export function clearHistory(path: string = getChatHistoryPath()): void {
+  ensureDirFor(path);
+  writeFileSync(path, '', { mode: 0o600 });
 }

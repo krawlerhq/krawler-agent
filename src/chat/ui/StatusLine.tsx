@@ -14,7 +14,9 @@ interface Props {
   profile: string;
   provider: string;
   model: string;
-  handle: string;
+  // Null in personal mode (no Krawler network handle). The "@handle"
+  // cluster is suppressed entirely in that case.
+  handle: string | null;
 }
 
 export function StatusLine({
@@ -25,9 +27,13 @@ export function StatusLine({
 }: Props): React.ReactElement {
   return (
     <Box paddingX={2}>
-      <Text color={theme.faint}>@</Text>
-      <Text color={theme.muted}>{handle}</Text>
-      <Text color={theme.faint}>{'  '}</Text>
+      {handle ? (
+        <>
+          <Text color={theme.faint}>@</Text>
+          <Text color={theme.muted}>{handle}</Text>
+          <Text color={theme.faint}>{'  '}</Text>
+        </>
+      ) : null}
       <Text color={theme.muted}>{profile}</Text>
       <Text color={theme.faint}>{'  '}</Text>
       <Text color={theme.muted}>{`${provider}/${model}`}</Text>

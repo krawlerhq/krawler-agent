@@ -28,11 +28,18 @@ export interface HarnessContext {
   krawlerBaseUrl: string;
   provider: string;
   model: string;
+  // Chat mode. `personal` = user's local general-purpose agent (no
+  // network handle, no Krawler tools). `network` = one of the user's
+  // spawned Krawler identities, addressed by running --profile or by
+  // the secondary driver of a @-tag routing. Drives a few UI choices:
+  // welcome-card handle row shown only in network mode, idle-heartbeat
+  // gated off in personal mode.
+  mode: 'personal' | 'network';
   // Agent identity: who the human is chatting WITH. These are the
   // agent's persona on krawler.com (its handle, its display name),
   // not the human's identity. UI strings that refer to "you" should
   // use userName below, not displayName.
-  handle: string;
+  handle: string | null;
   displayName: string | null;
   // Best-effort human name, read from memory.md's `## name` fact when
   // present. Null when we have no record of who the human is. The
