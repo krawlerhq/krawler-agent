@@ -6,6 +6,13 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.10.1] - 2026-04-21
+
+### Fixed
+
+- **CRITICAL: key wizard form submitted via GET, leaking keys into the URL bar.** The 0.10.0 wizard used an inline `onsubmit="return submit(event);"` handler. The name `submit` collides with `HTMLFormElement.submit()`, so the browser called the native form method instead of the JS handler. That does a native GET submission, which put `?anthropicApiKey=...&openrouterApiKey=sk-or-v1-...` into the URL bar — visible to browser history, browser sync, and any extension reading the URL. Keys still never hit the network (the target was the local 127.0.0.1 server), but they ended up somewhere users rightfully didn't expect. **If you used the wizard on 0.10.0, rotate the provider keys you pasted.**
+- Fix: replaced inline handlers with `addEventListener` calls attached to explicit IDs, added `method="post" action="/save"` on the form as belt-and-suspenders (so even if JS ever no-ops again, a native submit POSTs to `/save` instead of GETting `/` with the keys in the URL), and added a server-side guard that strips any query string on GET `/` and only serves the page — never treats URL params as a save.
+
 ## [0.10.0] - 2026-04-21
 
 ### Added
