@@ -17,11 +17,11 @@ Scratch pad for picking up a session that crashed mid-work. Update this whenever
 
 ### In flight
 
-- (none — [apps#95](https://github.com/erphq/krawler/pull/95) merged + deployed at ~00:52 UTC, platform at `f3bc286`. Runtime panel reorganised: Advanced gear now hides provider+model; Cadence, Dry-run, and "Last cycle failed" banner are primary.)
+- (none — platform at `49bddcc6`, agent at `0.9.2`. UX pass landed across [apps#97](https://github.com/erphq/krawler/pull/97) (agents list split + breadcrumb + settings modal) and [apps#98](https://github.com/erphq/krawler/pull/98) (LinkedIn-style `/agent/<handle>` URLs + nginx rewrite).)
 
-### Awaiting user feedback
+### Non-code prod changes to remember
 
-- User said "there are bugs all over" after #94 deploy. I shipped the UX redesign (#95) in response and asked for specific repro steps on remaining bugs. Next loop: get the specifics, fix, ship.
+- `/etc/nginx/sites-available/krawler.com` on the `krawler` host has a new `location ^~ /agent/ { try_files $uri $uri/ /agent/index.html; }` block (backup at `krawler.com.bak.20260421-014008`). The change is NOT in version control; if the vhost gets restored from git/chef/whatever, this block needs re-adding.
 
 ### Open issue the user needs to resolve manually
 

@@ -366,6 +366,67 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
       pushSystem(renderHelp());
       return;
     }
+    if (line === '/login') {
+      void (async () => {
+        try {
+          const { KrawlerClient } = await import('../../krawler.js');
+          const { saveUserAuth } = await import('../../auth.js');
+          const baseUrl = ctx.krawlerBaseUrl || 'https://krawler.com/api';
+          const client = new KrawlerClient(baseUrl, '');
+          const { hostname } = await import('node:os');
+          const init = await client.cliInit(hostname());
+          pushSystem(`\u25b8 opening krawler.com to confirm code ${init.shortCode} \u2026`);
+          try {
+            const open = (await import('open')).default;
+            await open(init.loginUrl);
+          } catch { /* best-effort */ }
+          pushSystem(`  if your browser didn't open: ${init.loginUrl}`);
+          const deadline = Date.now() + 5 * 60 * 1000;
+          while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 2000));
+            let p;
+            try { p = await client.cliPoll(init.nonce); } catch (e) {
+              pushSystem(`\u2717 login polling failed \u00b7 ${(e as Error).message}`);
+              return;
+            }
+            if (p.status === 'pending') continue;
+            if (p.status === 'gone') {
+              pushSystem(`\u2717 login expired \u00b7 ${p.error}. Run /login again.`);
+              return;
+            }
+            if (p.status === 'already-claimed') {
+              pushSystem(`\u2717 login already picked up elsewhere. Run /login again.`);
+              return;
+            }
+            try {
+              const who = await client.cliWhoami(p.token);
+              saveUserAuth({ token: p.token, userId: who.user.id, email: who.user.email });
+              pushSystem(`\u2713 signed in as ${who.user.email}`);
+              return;
+            } catch (e) {
+              pushSystem(`\u2717 login succeeded but whoami failed \u00b7 ${(e as Error).message}`);
+              return;
+            }
+          }
+          pushSystem('\u2717 login timed out after 5 minutes. Run /login again when you\'re ready.');
+        } catch (e) {
+          pushSystem(`\u2717 /login failed: ${(e as Error).message}`);
+        }
+      })();
+      return;
+    }
+    if (line === '/logout') {
+      void (async () => {
+        try {
+          const { clearUserAuth } = await import('../../auth.js');
+          clearUserAuth();
+          pushSystem('\u2713 signed out. run /login to sign back in.');
+        } catch (e) {
+          pushSystem(`/logout failed: ${(e as Error).message}`);
+        }
+      })();
+      return;
+    }
     if (line === '/clear') {
       setMessages([]);
       return;
@@ -606,6 +667,9 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
             ? [{ label: 'profile', value: ctx.profile }]
             : []),
           { label: 'history', value: homePath },
+          ...(ctx.userAuth
+            ? [{ label: 'signed in', value: ctx.userAuth.email, color: theme.accent }]
+            : [{ label: 'signed in', value: 'not yet · type /login', color: theme.dim }]),
           ...(ctx.mentionables.length > 0
             ? [{
                 label: ctx.mode === 'personal' ? 'network' : 'also here',
@@ -658,6 +722,8 @@ function renderHelp(): string {
   return [
     'slash commands:',
     '  /help, /?          this list',
+    '  /login             sign into krawler.com (browser handshake)',
+    '  /logout            forget the stored CLI token on this machine',
     '  /post              force one post now (overrides dry-run, cap 1)',
     '  /profiles          list local agent profiles',
     '  /switch <name>     prints command to re-run with different profile',

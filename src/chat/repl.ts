@@ -436,6 +436,7 @@ async function runNetworkAgentChat(_options: { noOpen?: boolean } = {}): Promise
       displayName: e.displayName,
       profile: e.profile,
     })),
+    userAuth: null,
   };
 
   // Clear the terminal so the banner + welcome card land at the top
@@ -470,7 +471,49 @@ async function runNetworkAgentChat(_options: { noOpen?: boolean } = {}): Promise
 async function runPersonalAgentChat(): Promise<void> {
   const settingsUrl: string | null = null;
   const personal = loadPersonalConfig();
-  const shared = loadSharedKeys();
+  let shared = loadSharedKeys();
+
+  // First-run provider-key wizard. If shared-keys.json has no key
+  // populated for any cloud provider, open a browser form so the
+  // human can paste once. Local-only: the form writes to shared-
+  // keys.json on 127.0.0.1; krawler.com never sees the key.
+  //
+  // Skippable (the wizard's "Skip" button) — in that case the next
+  // block's wait-loop kicks in with the "paste into shared-keys.json"
+  // message. Ollama-only users don't need a cloud key; if they've
+  // already set a valid ollamaBaseUrl, the wizard is skipped.
+  const { hasAnyProviderKey, startKeyWizard } = await import('../key-wizard.js');
+  if (!hasAnyProviderKey(shared) && personal.provider !== 'ollama') {
+    try {
+      await startKeyWizard();
+      shared = loadSharedKeys();
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log(`  ${DIM}key wizard failed: ${(e as Error).message}. Fall through to manual paste.${RESET}`);
+    }
+  }
+
+  // Also run the CLI device-auth bootstrap check: if auth.json
+  // exists, validate it via GET /cli/whoami. The returned user
+  // identity flows into the welcome card via HarnessContext.userAuth.
+  // Missing auth.json is fine — the human can /login later.
+  let userAuthCtx: { email: string; id: string } | null = null;
+  try {
+    const { loadUserAuth } = await import('../auth.js');
+    const cached = loadUserAuth();
+    if (cached) {
+      const base = (loadConfig().krawlerBaseUrl || 'https://krawler.com/api');
+      const whoClient = new KrawlerClient(base, '');
+      try {
+        const who = await whoClient.cliWhoami(cached.token);
+        userAuthCtx = { email: who.user.email, id: who.user.id };
+      } catch {
+        // Token rejected — don't clear auth.json automatically (might
+        // just be offline); just don't surface a stale "signed in"
+        // row. The human can /login again to refresh.
+      }
+    }
+  } catch { /* ignore */ }
 
   // Resolve the personal agent's provider credentials from the shared
   // key store. Unlike network mode we DON'T require a Krawler key —
@@ -591,7 +634,7 @@ async function runPersonalAgentChat(): Promise<void> {
     version,
     settingsUrl,
     profile: 'personal',
-    krawlerBaseUrl: '',
+    krawlerBaseUrl: (loadConfig().krawlerBaseUrl || 'https://krawler.com/api'),
     provider: personal.provider,
     model: personal.model,
     mode: 'personal',
@@ -605,6 +648,7 @@ async function runPersonalAgentChat(): Promise<void> {
       displayName: e.displayName,
       profile: e.profile,
     })),
+    userAuth: userAuthCtx,
   };
 
   process.stdout.write('\u001b[2J\u001b[H');

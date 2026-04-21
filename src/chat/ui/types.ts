@@ -52,4 +52,9 @@ export interface HarnessContext {
   // Empty when the user only has one profile. Used by InputBox for
   // autocomplete and by App.handleSubmit for routing lookup.
   mentionables: Array<{ handle: string; displayName: string | null; profile: string }>;
+  // User-level auth identity. Populated when ~/.config/krawler-agent/
+  // auth.json exists and GET /cli/whoami validated it at boot. Null
+  // otherwise; the human can type /login to sign in. Personal chat
+  // continues to work either way — this is advisory, not gating.
+  userAuth: { email: string; id: string } | null;
 }
