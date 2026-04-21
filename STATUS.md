@@ -6,6 +6,46 @@
 
 ---
 
+## Resume-from-crash · session snapshot · updated 2026-04-20 23:30 UTC
+
+Scratch pad for picking up a session that crashed mid-work. Update this whenever something meaningful ships or a PR is opened. **Not** a substitute for CHANGELOG (releases) or the topic sections below (direction).
+
+### Published versions (npm latest)
+
+- `@krawlerhq/agent` → **0.8.0** (released 2026-04-20). `krawler` CLI now opens a personal local assistant; Krawler network identities are `@`-addressable secondaries. `krawler --profile <name>` still opens the pre-0.8.0 chat-as-network-agent mode.
+- Prior releases this session: 0.6.4 (welcome greets human), 0.6.5 (suppress stale `127.0.0.1:8717` references in chat), 0.7.0 (@handle routing), 0.7.1 (mentionables render-loop fix), 0.7.2 (openrouter slug + z.number schema fix).
+
+### In flight
+
+- (none — [apps#95](https://github.com/erphq/krawler/pull/95) merged + deployed at ~00:52 UTC, platform at `f3bc286`. Runtime panel reorganised: Advanced gear now hides provider+model; Cadence, Dry-run, and "Last cycle failed" banner are primary.)
+
+### Awaiting user feedback
+
+- User said "there are bugs all over" after #94 deploy. I shipped the UX redesign (#95) in response and asked for specific repro steps on remaining bugs. Next loop: get the specifics, fix, ship.
+
+### Open issue the user needs to resolve manually
+
+- **@bright-warden is on `google` provider with model `claude-opus-4-7`.** Google serves Gemini, not Claude — it's a user misconfiguration, not a slug format bug. The normaliser can't rescue this one. User must visit `krawler.com/agent/@bright-warden`, open Runtime, and either pick a Gemini slug (`gemini-2.5-pro`/`gemini-2.5-flash`) or flip the provider pill to `openrouter` / `anthropic`.
+
+### Local user state gotchas
+
+- User's running `krawler start` daemon (pid `73907`, started 11:10 AM) loaded an earlier build. After each agent npm publish tell the user: `pkill -f 'cli.js start' && krawler start` (or `krawler` for chat).
+- Profiles `agent-5` and `agent-6` on the user's machine have no `krawlerApiKey` — silently skipped by `krawler start`. User must paste keys manually or spawn fresh agents.
+- User is on openrouter (`sk-or-v1-6bf3bc...` in `~/.config/krawler-agent/shared-keys.json`). No anthropic / openai / google keys set.
+
+### Direction notes (from recent conversation)
+
+- "krawler" (the agent) = user's personal Hermes-like general-purpose assistant. Krawler social network is ONE tool among many, not its job description. 0.8.0 encodes this.
+- @-handle routing is turn-scoped with autocomplete; unknown handles fail closed.
+- Sidebar reframe (#92) is the first step toward agent-framed copy across krawler.com. Counts for Agent posts / Agent jobs are not wired yet — separate concern.
+
+### Next-up (queued, not started)
+
+- Wire up `Agent posts` and `Agent jobs` count aggregations (need a new `/me/stats` endpoint or aggregate client-side from `/me/agents`).
+- Investigate whether the chat idle-heartbeat should fan out to ALL network profiles (currently only the primary when you `krawler --profile <name>`); separate from personal-mode chat which has no heartbeat.
+
+---
+
 ## TL;DR · updated 2026-04-20
 
 **`@krawlerhq/agent@0.6.0` is live on npm.** The 0.5 series built the chat REPL (0.5.23–0.5.33) and added server-side pair tokens for auto-key-rotation (0.5.38–0.5.40). 0.6.0 collapsed the local dashboard entirely: `web/` and `src/server.ts` are deleted, `krawler start` is headless, and agent management (provider, model, cadence, dry-run, behaviors, reflection) lives at `krawler.com/agent/@<handle>` with a Runtime panel and a Recent activity panel. Linked installs see runtime changes on their next heartbeat.

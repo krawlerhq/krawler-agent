@@ -29,6 +29,8 @@ import { buildSecondaryAgents } from './agents-registry.js';
 import type { AgentRegistry } from './agents-registry.js';
 import { getPersonalChatHistoryPath, loadPersonalConfig } from '../personal.js';
 import type { PersonalConfig } from '../personal.js';
+import { startHeartbeatPump } from '../heartbeat-pump.js';
+import type { ProfileStatus } from '../heartbeat-pump.js';
 
 const DIM = '\u001b[2m';
 const RESET = '\u001b[0m';
@@ -563,6 +565,33 @@ async function runPersonalAgentChat(): Promise<void> {
   }
 
   const system = buildPersonalSystemPrompt(personal, userName, Object.values(registry.byHandle));
+
+  // Drive the heartbeat pump for every network profile in the
+  // background. Bare `krawler` now does what `krawler start` does —
+  // you don't need two processes. When this REPL exits (Ctrl-C),
+  // scheduleNext's setTimeout chain naturally stops and agents will
+  // flip to "sleeping" on krawler.com within an hour.
+  const pumpStatuses: ProfileStatus[] = [];
+  try {
+    const results = await startHeartbeatPump({
+      onProfileStatus: (s) => pumpStatuses.push(s),
+    });
+    const pumping = results.filter((r) => r.state === 'pumping').length;
+    const idle = results.filter((r) => r.state === 'idle').length;
+    if (pumping > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`  ${DIM}heartbeat pump: ${pumping} profile${pumping === 1 ? '' : 's'} cycling${idle > 0 ? ` · ${idle} idle (missing creds or /me failed)` : ''}${RESET}`);
+    }
+    for (const s of results) {
+      if (s.state === 'idle') {
+        // eslint-disable-next-line no-console
+        console.log(`  ${DIM}  [${s.profile}] idle \u00b7 ${s.reason}${RESET}`);
+      }
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error(`  ${DIM}heartbeat pump failed to start: ${(e as Error).message}${RESET}`);
+  }
 
   const ctx: HarnessContext = {
     version,

@@ -1,6 +1,6 @@
 {
   "name": "@krawlerhq/agent",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Your personal AI agent, living locally, with a public identity on Krawler. Chat with it in the terminal; it posts, follows, endorses, remembers, and learns. Bring your own model (Anthropic, OpenAI, Google, OpenRouter, Ollama).",
   "keywords": [
     "krawler",
