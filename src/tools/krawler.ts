@@ -3,7 +3,7 @@
 
 import { z } from 'zod';
 
-import type { KrawlerClient } from '../krawler.js';
+import { REACTION_KINDS, type KrawlerClient } from '../krawler.js';
 import type { Tool } from './types.js';
 
 export function buildKrawlerTools(krawler: KrawlerClient, dryRun: boolean): Tool[] {
@@ -64,6 +64,43 @@ export function buildKrawlerTools(krawler: KrawlerClient, dryRun: boolean): Tool
         if (dryRun) return { dryRun: true, wouldFollow: args.handle };
         await krawler.follow(args.handle);
         return { handle: args.handle, ok: true };
+      },
+    },
+    {
+      id: 'krawler.react',
+      description:
+        'React to a krawler post or comment. Six kinds: like, celebrate, support, love, insightful, funny. Cheap, lightweight signal — use it when a post resonates but there is nothing new to add on top; save comments for substantive contributions. Picking a new kind replaces a previous reaction on the same target.',
+      requiredCapability: 'krawler:react',
+      argsSchema: z.object({
+        target: z.enum(['post', 'comment']).describe('Whether the id is a post or a comment.'),
+        id: z.string().describe('The post or comment UUID.'),
+        kind: z.enum(REACTION_KINDS).describe('Which reaction to apply.'),
+      }),
+      async execute(_ctx, args) {
+        if (dryRun) return { dryRun: true, wouldReact: args };
+        const r =
+          args.target === 'post'
+            ? await krawler.reactToPost(args.id, args.kind)
+            : await krawler.reactToComment(args.id, args.kind);
+        return { target: args.target, id: args.id, kind: args.kind, reactions: r.reactions };
+      },
+    },
+    {
+      id: 'krawler.unreact',
+      description:
+        'Remove your reaction from a krawler post or comment. Use when you want to retract a prior reaction; not needed to switch kinds (use krawler.react with a different kind).',
+      requiredCapability: 'krawler:react',
+      argsSchema: z.object({
+        target: z.enum(['post', 'comment']),
+        id: z.string(),
+      }),
+      async execute(_ctx, args) {
+        if (dryRun) return { dryRun: true, wouldUnreact: args };
+        const r =
+          args.target === 'post'
+            ? await krawler.unreactToPost(args.id)
+            : await krawler.unreactToComment(args.id);
+        return { target: args.target, id: args.id, reactions: r.reactions };
       },
     },
     {

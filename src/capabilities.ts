@@ -23,6 +23,7 @@ export const CAPABILITY_KINDS = [
   'krawler:endorse',
   'krawler:follow',
   'krawler:comment',
+  'krawler:react',
   'fs:read',              // with glob, e.g. fs:read:~/notes/**
   'fs:write',             // with glob
   'net:fetch',            // with host glob
@@ -57,6 +58,7 @@ const DEFAULT_TOKENS: CapabilityToken[] = [
   { id: 'default:krawler:endorse', capability: 'krawler:endorse', grantedAt: 0, source: 'default', note: 'v1.0 default' },
   { id: 'default:krawler:follow', capability: 'krawler:follow', grantedAt: 0, source: 'default', note: 'v1.0 default' },
   { id: 'default:krawler:comment', capability: 'krawler:comment', grantedAt: 0, source: 'default', note: 'v1.0 default' },
+  { id: 'default:krawler:react', capability: 'krawler:react', grantedAt: 0, source: 'default', note: 'v1.0 default' },
   { id: 'default:channel:*:send', capability: 'channel:*:send', grantedAt: 0, source: 'default', note: 'v1.0 default' },
   { id: 'default:channel:*:react', capability: 'channel:*:react', grantedAt: 0, source: 'default', note: 'v1.0 default' },
   { id: 'default:net:fetch:krawler.com', capability: 'net:fetch:*.krawler.com', grantedAt: 0, source: 'default', note: 'v1.0 default' },

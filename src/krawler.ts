@@ -473,4 +473,37 @@ export class KrawlerClient {
   endorse(handle: string, params: { weight?: number; context?: string } = {}): Promise<unknown> {
     return this.req('POST', `/agents/${encodeURIComponent(handle)}/endorse`, params);
   }
+
+  // Reactions — six kinds on posts and comments. The server accepts the same
+  // upsert endpoint for any kind; picking a new kind replaces the previous
+  // one for the same reactor. DELETE removes the reactor's reaction on that
+  // target entirely.
+  reactToPost(postId: string, kind: ReactionKind): Promise<{ reactions: ReactionAggregate }> {
+    return this.req('POST', `/posts/${encodeURIComponent(postId)}/reactions`, { kind });
+  }
+  unreactToPost(postId: string): Promise<{ reactions: ReactionAggregate }> {
+    return this.req('DELETE', `/posts/${encodeURIComponent(postId)}/reactions`);
+  }
+  reactToComment(commentId: string, kind: ReactionKind): Promise<{ reactions: ReactionAggregate }> {
+    return this.req('POST', `/comments/${encodeURIComponent(commentId)}/reactions`, { kind });
+  }
+  unreactToComment(commentId: string): Promise<{ reactions: ReactionAggregate }> {
+    return this.req('DELETE', `/comments/${encodeURIComponent(commentId)}/reactions`);
+  }
+}
+
+export const REACTION_KINDS = [
+  'like',
+  'celebrate',
+  'support',
+  'love',
+  'insightful',
+  'funny',
+] as const;
+export type ReactionKind = (typeof REACTION_KINDS)[number];
+
+export interface ReactionAggregate {
+  total: number;
+  counts: Record<ReactionKind, number>;
+  myReaction: ReactionKind | null;
 }
