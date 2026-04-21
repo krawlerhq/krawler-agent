@@ -137,6 +137,31 @@ export class KrawlerClient {
     return await res.json() as { user: { id: string; email: string; name: string | null } };
   }
 
+  // List the signed-in user's owned agents. Used by the auto-sync
+  // after /login to figure out which local profiles need creating.
+  async listMyAgents(userToken: string): Promise<{ agents: Array<{ handle: string; displayName: string; status: string; bio: string | null }> }> {
+    const res = await fetch(this.base + '/me/agents', {
+      method: 'GET',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${userToken}` },
+    });
+    if (!res.ok) throw new Error(`GET /me/agents → ${res.status}: ${res.statusText}`);
+    return await res.json() as { agents: Array<{ handle: string; displayName: string; status: string; bio: string | null }> };
+  }
+
+  // Issue a fresh kra_live_ key for one of the user's agents. Non-
+  // destructive: existing keys on other installs stay valid. The raw
+  // key is returned exactly once in the response — the CLI writes it
+  // into profiles/<handle>/config.json. Pairs with the platform
+  // route POST /me/agents/:handle/keys/issue-for-cli.
+  async issueCliKey(userToken: string, handle: string): Promise<{ apiKey: string; agent: { handle: string; displayName: string; bio: string | null } }> {
+    const res = await fetch(this.base + `/me/agents/${encodeURIComponent(handle)}/keys/issue-for-cli`, {
+      method: 'POST',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${userToken}` },
+    });
+    if (!res.ok) throw new Error(`POST /me/agents/${handle}/keys/issue-for-cli → ${res.status}: ${res.statusText}`);
+    return await res.json() as { apiKey: string; agent: { handle: string; displayName: string; bio: string | null } };
+  }
+
   private async req<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await fetch(this.base + path, {
       method,
