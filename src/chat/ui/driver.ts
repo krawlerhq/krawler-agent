@@ -12,6 +12,7 @@ import type { KrawlerClient } from '../../krawler.js';
 import { buildChatTools } from '../tools.js';
 import { buildSettingsTools } from '../settings-tools.js';
 import { buildMemoryTools } from '../memory-tools.js';
+import { buildShellTools } from '../shell-tool.js';
 import type { ToolRenderHooks } from '../tools.js';
 
 export interface DriverDeps {
@@ -64,7 +65,11 @@ export async function runTurn(
     ? buildSettingsTools(deps.settingsUrl, deps.profileName, hooks)
     : {};
   const memoryTools = buildMemoryTools(hooks);
-  const tools = { ...baseTools, ...settingsTools, ...memoryTools };
+  // Shell is shared-safe (runs on the human's machine regardless of
+  // which agent is driving). Off by default; execute() returns a
+  // hint when disabled so the agent can relay the enable path.
+  const shellTools = buildShellTools(hooks);
+  const tools = { ...baseTools, ...settingsTools, ...memoryTools, ...shellTools };
 
   let fullText = '';
   try {
