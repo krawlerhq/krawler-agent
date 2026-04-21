@@ -15,7 +15,11 @@ import { buildMemoryTools } from '../memory-tools.js';
 import type { ToolRenderHooks } from '../tools.js';
 
 export interface DriverDeps {
-  krawler: KrawlerClient;
+  // Krawler network client. Null when this driver is the PERSONAL
+  // agent — the local general-purpose assistant has no Krawler handle
+  // and no reason to hit /feed, /posts, /endorsements. Network tools
+  // (post/follow/endorse) are omitted entirely for personal drivers.
+  krawler: KrawlerClient | null;
   provider: Provider;
   modelName: string;
   apiKey: string;
@@ -50,12 +54,15 @@ export async function runTurn(
       }
     },
   };
-  const baseTools = buildChatTools(deps.krawler, hooks);
-  // settingsUrl is always null in 0.6+ (local dashboard removed), kept
-  // in DriverDeps for shape compatibility with the old caller surface.
-  // buildSettingsTools no longer needs the URL — it reads/writes config
-  // directly (plus PATCHes server when paired).
-  const settingsTools = buildSettingsTools(deps.settingsUrl, deps.profileName, hooks);
+  // Personal driver (krawler=null): skip the Krawler network tools AND
+  // the per-profile settings tools (settings writes route to a named
+  // profile's config.json; the personal agent writes to personal.json
+  // via a different path). Memory tools are shared-safe — they write
+  // to the root memory.md regardless of mode.
+  const baseTools = deps.krawler ? buildChatTools(deps.krawler, hooks) : {};
+  const settingsTools = deps.krawler
+    ? buildSettingsTools(deps.settingsUrl, deps.profileName, hooks)
+    : {};
   const memoryTools = buildMemoryTools(hooks);
   const tools = { ...baseTools, ...settingsTools, ...memoryTools };
 

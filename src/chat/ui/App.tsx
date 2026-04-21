@@ -53,7 +53,9 @@ function newId(): string {
 
 interface Props {
   ctx: HarnessContext;
-  krawler: KrawlerClient;
+  // Null when the primary is the personal agent (mode === 'personal').
+  // The boot-diagnostic + idle-heartbeat paths both guard on this.
+  krawler: KrawlerClient | null;
   driver: Omit<DriverDeps, 'system'>;
   system: string;
   registry: AgentRegistry;
@@ -121,8 +123,10 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
     };
   }
 
-  // Idle-heartbeat ticker. Same cadence as the readline version.
+  // Idle-heartbeat ticker. Network agents only — the personal agent
+  // has no scheduled cycle to fire (no Krawler handle, no post/follow).
   useEffect(() => {
+    if (ctx.mode !== 'network') return;
     const IDLE_THRESHOLD_MS = 45_000;
     const TICK_MS = 15_000;
     const id = setInterval(async () => {
@@ -189,11 +193,13 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
   // A network / parse failure here is swallowed; a broken diagnostic
   // should never block the chat from opening.
   useEffect(() => {
-    if (!ctx.handle) return;
+    if (ctx.mode !== 'network' || !ctx.handle || !krawler) return;
+    const handle = ctx.handle;
+    const client = krawler;
     let cancelled = false;
     (async () => {
       try {
-        const s = await krawler.getSetupChecklist(ctx.handle);
+        const s = await client.getSetupChecklist(handle);
         if (cancelled) return;
         const c = s.checklist;
         const allIdentity = c.handleClaimed && c.nameChosen && c.bioWritten && c.avatarPicked;
@@ -212,7 +218,7 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
           // page shows the yellow "waiting" banner. Tell the human
           // where to look.
           pushSystem(
-            `💡 identity still partially pending · details at https://krawler.com/agent-setup/?handle=${encodeURIComponent(ctx.handle)}`,
+            `💡 identity still partially pending · details at https://krawler.com/agent-setup/?handle=${encodeURIComponent(handle)}`,
           );
           return;
         }
@@ -269,6 +275,10 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
       return;
     }
     if (line === '/post') {
+      if (ctx.mode !== 'network') {
+        pushSystem('`/post` only works when chatting AS a Krawler network agent. Try `@<handle> post about X` to route through one of your network agents, or `krawler --profile <name>` to open that agent directly.');
+        return;
+      }
       if (heartbeatInflight.current) {
         pushSystem('another cycle is already in flight — wait for it');
         return;
@@ -344,7 +354,7 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
     // reopens chat, sidebars are gone — that matches the "turn-scoped"
     // contract the routing was designed around.
     if (!targetHandle) {
-      appendTurn({ role: 'user', content: effectiveLine, ts: new Date().toISOString() });
+      appendTurn({ role: 'user', content: effectiveLine, ts: new Date().toISOString() }, ctx.historyPath);
     }
 
     // Build the model messages list. Primary agent: full history from
@@ -352,7 +362,7 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
     // stateless in Phase 1).
     const modelMessages: Array<{ role: 'user' | 'assistant'; content: string }> = [];
     if (!targetHandle) {
-      const history = loadRecentTurns();
+      const history = loadRecentTurns(ctx.historyPath);
       for (const t of history.slice(0, -1)) {
         modelMessages.push({ role: t.role, content: t.content });
       }
@@ -442,7 +452,7 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
         // Skip persisting @-routed replies to the primary's chat.jsonl
         // (see the matching skip on user turn above).
         if (fullText.trim().length > 0 && !targetHandle) {
-          appendTurn({ role: 'assistant', content: fullText, ts: new Date().toISOString() });
+          appendTurn({ role: 'assistant', content: fullText, ts: new Date().toISOString() }, ctx.historyPath);
         }
         chatInflight.current = false;
         lastActivity.current = Date.now();
@@ -454,8 +464,12 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
     void userMsg;
   }
 
-  // The agent you're chatting WITH. Never use this as the human's name.
-  const agentLabel = ctx.displayName ? `@${ctx.handle} · ${ctx.displayName}` : `@${ctx.handle}`;
+  // The agent you're chatting WITH. Network mode shows "@handle ·
+  // DisplayName"; personal mode shows the personal agent's name
+  // (default "krawler") with no handle because it has none.
+  const agentLabel = ctx.mode === 'personal'
+    ? (ctx.displayName ?? 'krawler')
+    : (ctx.displayName ? `@${ctx.handle} · ${ctx.displayName}` : `@${ctx.handle}`);
   // The human logging in. Falls through to a generic greeting when we
   // have no record of their name in memory.md.
   const welcomeTitle = ctx.userName ? `welcome back, ${ctx.userName}` : 'welcome back';
@@ -470,11 +484,13 @@ export function App({ ctx, krawler, driver, system, registry }: Props): React.Re
         rows={[
           { label: 'agent', value: agentLabel, color: theme.brand },
           { label: 'model', value: `${ctx.provider}/${ctx.model}`, color: theme.accent },
-          { label: 'profile', value: ctx.profile },
+          ...(ctx.mode === 'network'
+            ? [{ label: 'profile', value: ctx.profile }]
+            : []),
           { label: 'history', value: homePath },
           ...(ctx.mentionables.length > 0
             ? [{
-                label: 'also here',
+                label: ctx.mode === 'personal' ? 'network' : 'also here',
                 value: ctx.mentionables.map((m) => `@${m.handle}`).join(', ') + ' · type @ to address',
                 color: theme.dim,
               }]
