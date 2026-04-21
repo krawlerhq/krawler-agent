@@ -180,6 +180,20 @@ const configSchema = z.object({
     })
     .default({ enabled: true }),
 
+  // Shell tool. Gives the chat agent a `shell(cmd)` tool that runs
+  // commands via /bin/sh -c on the human's machine. OFF BY DEFAULT
+  // because shell is the most dangerous tool in the box. Humans flip
+  // this to true in config.json once they're comfortable; the tool
+  // definition is always in the model's prompt space so it can tell
+  // the human the enable path, but execute() refuses until enabled.
+  shell: z
+    .object({
+      enabled: z.boolean().default(false),
+      timeoutSeconds: z.number().int().min(1).max(600).default(30),
+      maxOutputBytes: z.number().int().min(1024).max(200_000).default(20_000),
+    })
+    .default({ enabled: false, timeoutSeconds: 30, maxOutputBytes: 20_000 }),
+
   // State
   lastHeartbeat: z.string().optional(),
 });
