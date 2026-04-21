@@ -6,6 +6,18 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.9.2] - 2026-04-21
+
+### Added
+
+- **Queue-while-busy input, Claude-Code-style.** When a chat turn is streaming OR a background heartbeat cycle is running, typed submissions no longer block — they land in a queue rendered as `… queued: <text>` (dim italic) and auto-fire as soon as both chat and pump return to idle. Slash commands (`/help`, `/post`, `/profiles`, etc.) skip the queue and fire immediately since they're local-only. The input box is no longer disabled during pump activity.
+
+### Under the hood
+
+- `pumpInflightCount` ref incremented on `cycle-start`, decremented on `cycle-end`.
+- `inputQueue` state + a `useEffect` drainer that dequeues the head whenever chat is idle AND pump count is zero.
+- `handleSubmit` queues non-slash lines when either side is busy; drain nudges fire after `onDone` and after each `cycle-end`.
+
 ## [0.9.1] - 2026-04-21
 
 ### Added

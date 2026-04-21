@@ -74,9 +74,19 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
   const [thinkingVerb, setThinkingVerb] = useState<string>('Thinking');
   const [slashMatches, setSlashMatches] = useState<SlashCommand[]>([]);
   const [slashSelected, setSlashSelected] = useState(0);
+  // Input queue: typed-and-enter'd messages that arrived while a chat
+  // turn OR a pump cycle was in flight. Held here instead of dropped
+  // or blocked via a disabled input. Drained in order when both chat
+  // and pump return to idle. Claude-Code-style "keep typing while I
+  // think" pattern.
+  const [inputQueue, setInputQueue] = useState<string[]>([]);
   const inflightRef = useRef<ChatMessage | null>(null);
   const lastActivity = useRef<number>(Date.now());
   const chatInflight = useRef<boolean>(false);
+  // Number of pump cycles currently running in the background. Each
+  // cycle-start event bumps this, each cycle-end decrements. Used to
+  // decide whether a submit should queue or fire immediately.
+  const pumpInflightCount = useRef<number>(0);
   const heartbeatInflight = useRef<boolean>(false);
 
   const assistantDeps: DriverDeps = useMemo(
@@ -189,6 +199,27 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
     return () => clearInterval(id);
   }, []);
 
+  // Drainer: fire the first queued submission once both chat turn
+  // and all pump cycles are idle. Re-checked every time the queue
+  // array reference changes OR `inflight` clears. Claude-Code-style
+  // "I was typing while you were thinking, now go."
+  useEffect(() => {
+    if (inputQueue.length === 0) return;
+    if (chatInflight.current) return;
+    if (pumpInflightCount.current > 0) return;
+    const next = inputQueue[0];
+    if (next === undefined) return;
+    setInputQueue((q) => q.slice(1));
+    // Fire after microtask so the state update above commits first.
+    Promise.resolve().then(() => {
+      void handleSubmit(next);
+    });
+    // handleSubmit is stable (defined inside the component but closes
+    // over current state/refs); we can't include it here without a
+    // full useCallback refactor.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputQueue, inflight]);
+
   // Render the initial pump statuses once on mount as system
   // messages. The pre-Ink console output would've been wiped by the
   // screen-clear just before Ink takes over, so pass through props.
@@ -221,14 +252,14 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
         if (disposed) return;
         const bus = mod.pumpEvents;
         const onStart = (e: { handle: string }) => {
+          pumpInflightCount.current += 1;
           pushSystem(`▸ heartbeat @${e.handle}\u2026`);
         };
         const onEnd = (e: { handle: string; outcome: string; posts: number; endorses: number; follows: number; error?: string; skipReason?: string }) => {
+          pumpInflightCount.current = Math.max(0, pumpInflightCount.current - 1);
           if (e.outcome === 'failed') {
             pushSystem(`❯ @${e.handle} cycle failed \u00b7 ${e.error ?? 'unknown error'}`);
-            return;
-          }
-          if (e.posts > 0 || e.endorses > 0 || e.follows > 0) {
+          } else if (e.posts > 0 || e.endorses > 0 || e.follows > 0) {
             const bits: string[] = [];
             if (e.posts) bits.push(`posted ${e.posts}`);
             if (e.endorses) bits.push(`endorsed ${e.endorses}`);
@@ -239,6 +270,10 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
           } else {
             pushSystem(`❯ @${e.handle} cycle done \u00b7 no actions`);
           }
+          // Nudge the queue drainer. Using a setState callback with
+          // the same value is a no-op that still triggers the effect
+          // below if the queue has items waiting to drain.
+          setInputQueue((q) => q.slice());
         };
         bus.on('cycle-start', onStart);
         bus.on('cycle-end', onEnd);
@@ -312,6 +347,16 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
     const line = raw.trim();
     if (!line) return;
     lastActivity.current = Date.now();
+
+    // Queue-while-busy: if the chat turn is in flight OR a pump
+    // cycle is running, don't drop or block — stash the line and
+    // drain when both return to idle. Slash commands skip the
+    // queue (they're local-only and don't need the model).
+    if (!line.startsWith('/') && (chatInflight.current || pumpInflightCount.current > 0)) {
+      setInputQueue((q) => [...q, line]);
+      pushSystem(`… queued: ${line}`);
+      return;
+    }
 
     if (line === '/exit' || line === '/quit') {
       exit();
@@ -527,6 +572,9 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
         chatInflight.current = false;
         lastActivity.current = Date.now();
         setMode('idle');
+        // Nudge the drainer — calling setState on the queue with the
+        // same value re-runs the useEffect that watches it.
+        setInputQueue((q) => q.slice());
       },
     });
     // Suppress unused-var warning for userMsg (used for its side effect
@@ -586,7 +634,7 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
       ) : null}
       <Box paddingX={1}>
         <InputBox
-          disabled={!!inflight || heartbeatInflight.current}
+          disabled={false}
           onSubmit={handleSubmit}
           mentionables={inputMentionables}
           onSuggestionsChange={(m, s) => {
