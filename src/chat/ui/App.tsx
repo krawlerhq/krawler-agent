@@ -483,14 +483,9 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
     if (line === '/keys') {
       void (async () => {
         try {
-          const { startKeyWizard } = await import('../../key-wizard.js');
-          pushSystem('opening the provider-key form in your browser…');
-          const result = await startKeyWizard();
-          pushSystem(
-            result.saved
-              ? `✓ keys saved · ${result.url}`
-              : `skipped · open ${result.url} any time to edit`,
-          );
+          const { openSettingsBrowser } = await import('../../key-wizard.js');
+          const { url } = await openSettingsBrowser();
+          pushSystem(`opening provider-key form · ${url}`);
         } catch (e) {
           pushSystem(`/keys failed: ${(e as Error).message}`);
         }

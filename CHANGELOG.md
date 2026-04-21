@@ -6,6 +6,12 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.12.3] - 2026-04-21
+
+### Fixed
+
+- **Settings server is always-on now.** 0.12.2 bound 4242 during the first-run wizard then closed it on save, skip, or 30-minute timeout. That meant typing `http://127.0.0.1:4242/` later returned `ERR_CONNECTION_REFUSED`, which defeated the whole point of a stable bookmarkable URL. Now the CLI binds 4242 on every boot and keeps it open for the entire process lifetime, so manual URL nav and the `/keys` slash command both work any time. Clean shutdown on process exit frees the port. No user action required; update to 0.12.3 and the URL stays reachable.
+
 ## [0.12.2] - 2026-04-21
 
 ### Changed
