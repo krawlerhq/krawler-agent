@@ -6,6 +6,12 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.10.2] - 2026-04-21
+
+### Fixed
+
+- **Auto-switch personal provider to match whichever key is actually set.** On 0.10.0/0.10.1, if `shared-keys.json` had (say) an openrouter key while `personal.json` still said `provider: anthropic` (the first-run default), the wizard gate skipped (a key exists somewhere) and the wait-loop demanded the anthropic key the human didn't have. The human was stuck. Fixed: boot now checks whether the current `personal.provider` has a key; if not but another provider does, silently switches `personal.provider` + re-normalises `personal.model` for the new provider (e.g. `claude-opus-4-7` → `anthropic/claude-opus-4.7` when switching to openrouter). Wizard still fires when no provider has any key. Preference order for the fallback pick: openrouter, anthropic, openai, google, ollama — openrouter first because it's the single key that covers the most models.
+
 ## [0.10.1] - 2026-04-21
 
 ### Fixed

@@ -473,23 +473,63 @@ async function runPersonalAgentChat(): Promise<void> {
   const personal = loadPersonalConfig();
   let shared = loadSharedKeys();
 
-  // First-run provider-key wizard. If shared-keys.json has no key
-  // populated for any cloud provider, open a browser form so the
-  // human can paste once. Local-only: the form writes to shared-
-  // keys.json on 127.0.0.1; krawler.com never sees the key.
-  //
-  // Skippable (the wizard's "Skip" button) — in that case the next
-  // block's wait-loop kicks in with the "paste into shared-keys.json"
-  // message. Ollama-only users don't need a cloud key; if they've
-  // already set a valid ollamaBaseUrl, the wizard is skipped.
-  const { hasAnyProviderKey, startKeyWizard } = await import('../key-wizard.js');
-  if (!hasAnyProviderKey(shared) && personal.provider !== 'ollama') {
+  // Helper: does a given provider have a usable credential in shared?
+  // (ollama counts baseUrl, the cloud providers count their apiKey.)
+  const providerHasKey = (p: typeof personal.provider): boolean => {
+    switch (p) {
+      case 'anthropic':  return Boolean(shared.anthropicApiKey);
+      case 'openai':     return Boolean(shared.openaiApiKey);
+      case 'google':     return Boolean(shared.googleApiKey);
+      case 'openrouter': return Boolean(shared.openrouterApiKey);
+      case 'ollama':     return Boolean(shared.ollamaBaseUrl);
+    }
+  };
+  // If another provider HAS a key we could fall back to, return it.
+  // Preference order is "most commonly used first" — openrouter is
+  // the most popular choice in practice because it's a single key
+  // that covers Anthropic + OpenAI + Google + Ollama-hosted models.
+  const firstProviderWithKey = (): typeof personal.provider | null => {
+    const order = ['openrouter', 'anthropic', 'openai', 'google', 'ollama'] as const;
+    for (const p of order) if (providerHasKey(p)) return p;
+    return null;
+  };
+
+  // First-run provider-key wizard. Two conditions fire it:
+  //   1. No provider has any key at all (true first run).
+  //   2. The CURRENT personal.provider has no key AND no other
+  //      provider does either (so auto-switching below wouldn't help).
+  // Wizard opens a local HTML form at 127.0.0.1:<random-port>; keys
+  // go straight to shared-keys.json, never to the network.
+  const { startKeyWizard } = await import('../key-wizard.js');
+  if (!firstProviderWithKey()) {
     try {
       await startKeyWizard();
       shared = loadSharedKeys();
     } catch (e) {
       // eslint-disable-next-line no-console
       console.log(`  ${DIM}key wizard failed: ${(e as Error).message}. Fall through to manual paste.${RESET}`);
+    }
+  }
+
+  // Auto-switch personal.provider to match whichever key IS set.
+  // Pre-0.10.2 bug: personal.json might say provider=anthropic while
+  // shared-keys.json only has an openrouter key; the wait-loop then
+  // insists on an anthropic key the human doesn't have. Now, if the
+  // current provider has no key but another does, silently switch
+  // to the one that works. Also re-normalise the model slug for the
+  // new provider (e.g. claude-opus-4-7 → anthropic/claude-opus-4.7
+  // on openrouter) so the first model call doesn't 404.
+  if (!providerHasKey(personal.provider)) {
+    const fallback = firstProviderWithKey();
+    if (fallback && fallback !== personal.provider) {
+      const { savePersonalConfig } = await import('../personal.js');
+      const { normalizeModelForProvider } = await import('../config.js');
+      const newModel = normalizeModelForProvider(fallback, personal.model);
+      savePersonalConfig({ provider: fallback, model: newModel });
+      personal.provider = fallback;
+      personal.model = newModel;
+      // eslint-disable-next-line no-console
+      console.log(`  ${DIM}auto-switched personal agent to ${fallback}/${newModel} (the provider you have a key for)${RESET}`);
     }
   }
 
