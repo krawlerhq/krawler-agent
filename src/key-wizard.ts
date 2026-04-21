@@ -97,7 +97,11 @@ function renderPage(existing: SharedKeys): string {
   <div class="card">
     <h1>Krawler \u2014 provider keys</h1>
     <p class="sub">Paste at least one key so your local agent can call a model. Keys never leave this machine \u2014 they write to <code style="font-family:var(--mono);">~/.config/krawler-agent/shared-keys.json</code>.</p>
-    <form id="keyForm" onsubmit="return submit(event);">
+    <!-- method=post is belt-and-suspenders: even if the JS handler
+         somehow no-ops, native submission won't dump the keys into a
+         GET query string (which is what happened in 0.10.0 because the
+         JS function was named 'submit', colliding with HTMLFormElement.submit). -->
+    <form id="keyForm" method="post" action="/save" autocomplete="off">
       ${fieldHtml}
       <div class="row">
         <label for="ollamaBaseUrl">Ollama base URL</label>
@@ -105,44 +109,53 @@ function renderPage(existing: SharedKeys): string {
         <div class="hint">default: <code>http://localhost:11434</code>. Only change if you run Ollama elsewhere.</div>
       </div>
       <div class="actions">
-        <button type="button" class="secondary" onclick="skip();">Skip</button>
-        <button type="submit" class="primary">Save keys</button>
+        <button type="button" class="secondary" id="skipBtn">Skip</button>
+        <button type="submit" class="primary" id="saveBtn">Save keys</button>
       </div>
     </form>
     <div class="status" id="status"></div>
     <footer>You'll see this screen once. To edit keys later, hand-edit the JSON or re-run <code>krawler</code> with an empty shared-keys.json.</footer>
   </div>
   <script>
-    async function submit(e) {
-      e.preventDefault();
+    // Handlers attached via addEventListener rather than inline
+    // onsubmit/onclick so no variable name can shadow them. The
+    // 0.10.0 bug was calling a function we called 'submit' from an
+    // inline onsubmit; that name resolves to form.submit() first,
+    // which fires a native GET and dumps the keys in the URL bar.
+    (function () {
       const form = document.getElementById('keyForm');
-      const data = {};
-      for (const el of form.elements) {
-        if (!el.name) continue;
-        const v = (el.value || '').trim();
-        if (v) data[el.name] = v;
-      }
+      const skipBtn = document.getElementById('skipBtn');
       const status = document.getElementById('status');
-      status.className = 'status';
-      status.textContent = 'saving\u2026';
-      try {
-        const res = await fetch('/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
-        if (!res.ok) throw new Error('save failed');
-        status.className = 'status ok';
-        status.textContent = '\u2713 saved. You can close this tab and return to the terminal.';
-        setTimeout(() => { try { window.close(); } catch (e) {} }, 1200);
-      } catch (err) {
-        status.className = 'status err';
-        status.textContent = 'save failed: ' + (err.message || 'unknown');
+      function setStatus(msg, kind) {
+        status.className = 'status' + (kind ? ' ' + kind : '');
+        status.textContent = msg;
       }
-    }
-    async function skip() {
-      try { await fetch('/skip', { method: 'POST' }); } catch (e) {}
-      const status = document.getElementById('status');
-      status.className = 'status';
-      status.textContent = 'skipped. The CLI will wait for keys in shared-keys.json.';
-      setTimeout(() => { try { window.close(); } catch (e) {} }, 800);
-    }
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const data = {};
+        for (const el of form.elements) {
+          if (!el.name) continue;
+          const v = (el.value || '').trim();
+          if (v) data[el.name] = v;
+        }
+        setStatus('saving\u2026');
+        try {
+          const res = await fetch('/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+          if (!res.ok) throw new Error('save failed');
+          setStatus('\u2713 saved. You can close this tab and return to the terminal.', 'ok');
+          setTimeout(function () { try { window.close(); } catch (e) {} }, 1200);
+        } catch (err) {
+          setStatus('save failed: ' + (err.message || 'unknown'), 'err');
+        }
+        return false;
+      });
+      skipBtn.addEventListener('click', async function () {
+        try { await fetch('/skip', { method: 'POST' }); } catch (e) {}
+        setStatus('skipped. The CLI will wait for keys in shared-keys.json.');
+        setTimeout(function () { try { window.close(); } catch (e) {} }, 800);
+      });
+    })();
   </script>
 </body>
 </html>`;
@@ -156,7 +169,13 @@ export function startKeyWizard(): Promise<WizardResult> {
     const existing = loadSharedKeys();
     let settled = false;
     const server = createServer((req, res) => {
-      if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
+      // Strip query string. If a GET hits / with ?anthropicApiKey=... in
+      // the URL, that's the 0.10.0 bug (native form submit via GET
+      // leaking keys into the URL bar). We serve the page anyway so
+      // the user sees the form, but we never treat URL params as a
+      // save. Defense in depth alongside the client-side fix.
+      const urlPath = (req.url || '').split('?')[0];
+      if (req.method === 'GET' && (urlPath === '/' || urlPath === '/index.html')) {
         const body = renderPage(existing);
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',

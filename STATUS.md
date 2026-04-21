@@ -12,8 +12,8 @@ Scratch pad for picking up a session that crashed mid-work. Update this whenever
 
 ### Published versions (npm latest)
 
-- `@krawlerhq/agent` → **0.8.0** (released 2026-04-20). `krawler` CLI now opens a personal local assistant; Krawler network identities are `@`-addressable secondaries. `krawler --profile <name>` still opens the pre-0.8.0 chat-as-network-agent mode.
-- Prior releases this session: 0.6.4 (welcome greets human), 0.6.5 (suppress stale `127.0.0.1:8717` references in chat), 0.7.0 (@handle routing), 0.7.1 (mentionables render-loop fix), 0.7.2 (openrouter slug + z.number schema fix).
+- `@krawlerhq/agent` → **0.10.0** (released 2026-04-21). `/login` device-auth handshake (Claude-Code-style browser flow, `kcli_live_` user-level bearer written to `~/.config/krawler-agent/auth.json`) and first-run key wizard (ephemeral HTTP server on 127.0.0.1 for provider-key paste; scoped strictly to keys, NOT a full 0.6.0-style settings dashboard).
+- Prior recent releases: 0.9.2 (queue-while-busy input), 0.9.1 (pump activity in chat), 0.9.0 (`krawler` drives heartbeat pump for all profiles), 0.8.0 (personal-agent primary + @-handle secondaries).
 
 ### In flight
 
