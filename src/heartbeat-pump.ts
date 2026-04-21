@@ -45,6 +45,55 @@ export type ProfileStatus =
   | { profile: string; state: 'pumping'; handle: string; displayName: string | null; provider: string; model: string; cadenceMinutes: number; dryRun: boolean }
   | { profile: string; state: 'idle'; reason: string };
 
+// Arm a single profile: validate creds, resolve identity, fire the
+// first cycle in the background, arm the scheduled cadence loop.
+// Returns a ProfileStatus describing the outcome. Used by both the
+// boot-time pump walk AND the /sync slash command so a freshly-
+// created profile doesn't have to wait a full cadence before its
+// first post — it starts cycling RIGHT NOW.
+export async function armProfile(profile: string): Promise<ProfileStatus> {
+  return withProfile(profile, async (): Promise<ProfileStatus> => {
+    const config = loadConfig();
+    const creds = getActiveCredentials(config);
+    const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
+    const hasKrawlerKey = Boolean(config.krawlerApiKey);
+    if (!hasKrawlerKey || !hasModelCreds) {
+      const missing = [
+        hasKrawlerKey ? null : 'krawler key',
+        hasModelCreds ? null : `${config.provider} creds`,
+      ].filter(Boolean).join(' + ');
+      return { profile, state: 'idle', reason: `missing ${missing}` };
+    }
+    let me;
+    try {
+      const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
+      const r = await meWithAutoRotate(client);
+      me = r.agent;
+    } catch (e) {
+      return { profile, state: 'idle', reason: `/me failed: ${(e as Error).message}` };
+    }
+    // Fire the first cycle + arm the scheduled loop. Wrapped in
+    // withProfile so filesystem paths (activity.log, etc) resolve
+    // to this profile's dir. Not awaited: callers want the arming
+    // call to return fast so the chat UI keeps moving; cycle
+    // progress arrives via the pumpEvents bus the App subscribes to.
+    void withProfile(profile, async () => {
+      try { await runHeartbeat('scheduled'); } catch { /* logged to activity.log */ }
+      await scheduleNext(profile);
+    });
+    return {
+      profile,
+      state: 'pumping',
+      handle: me.handle,
+      displayName: me.displayName ?? null,
+      provider: config.provider,
+      model: config.model,
+      cadenceMinutes: config.cadenceMinutes,
+      dryRun: config.dryRun,
+    };
+  });
+}
+
 // Kick the pump: enumerate profiles, validate each, and for every
 // profile that's ready fire a heartbeat + arm scheduleNext so the
 // cadenced pump keeps running in the background. Returns the list
@@ -56,44 +105,7 @@ export async function startHeartbeatPump(options: PumpOptions = {}): Promise<Pro
 
   const statuses: ProfileStatus[] = [];
   for (const profile of profiles) {
-    const status = await withProfile(profile, async (): Promise<ProfileStatus> => {
-      const config = loadConfig();
-      const creds = getActiveCredentials(config);
-      const hasModelCreds = config.provider === 'ollama' ? Boolean(creds.baseUrl) : Boolean(creds.apiKey);
-      const hasKrawlerKey = Boolean(config.krawlerApiKey);
-      if (!hasKrawlerKey || !hasModelCreds) {
-        const missing = [
-          hasKrawlerKey ? null : 'krawler key',
-          hasModelCreds ? null : `${config.provider} creds`,
-        ].filter(Boolean).join(' + ');
-        return { profile, state: 'idle', reason: `missing ${missing}` };
-      }
-      let me;
-      try {
-        const client = new KrawlerClient(config.krawlerBaseUrl, config.krawlerApiKey);
-        const r = await meWithAutoRotate(client);
-        me = r.agent;
-      } catch (e) {
-        return { profile, state: 'idle', reason: `/me failed: ${(e as Error).message}` };
-      }
-      // Fire the first cycle + arm the scheduled loop. Wrapped in
-      // withProfile so filesystem paths (activity.log, etc) resolve
-      // to this profile's dir.
-      void withProfile(profile, async () => {
-        try { await runHeartbeat('scheduled'); } catch { /* logged to activity.log */ }
-        await scheduleNext(profile);
-      });
-      return {
-        profile,
-        state: 'pumping',
-        handle: me.handle,
-        displayName: me.displayName ?? null,
-        provider: config.provider,
-        model: config.model,
-        cadenceMinutes: config.cadenceMinutes,
-        dryRun: config.dryRun,
-      };
-    });
+    const status = await armProfile(profile);
     statuses.push(status);
     options.onProfileStatus?.(status);
   }

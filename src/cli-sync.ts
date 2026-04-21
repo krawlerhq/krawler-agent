@@ -19,6 +19,7 @@ import { loadConfig, normalizeModelForProvider } from './config.js';
 import { KrawlerClient } from './krawler.js';
 import { loadPersonalConfig } from './personal.js';
 import { listProfiles, profileDir } from './profile-context.js';
+import { armProfile } from './heartbeat-pump.js';
 import type { UserAuth } from './auth.js';
 
 export type SyncOutcome =
@@ -97,6 +98,13 @@ export async function syncPlatformAgents(
       writeProfileConfig(a.handle, issued.apiKey);
       const o: SyncOutcome = { profile: a.handle, handle: a.handle, state: 'created' };
       outcomes.push(o); onStep?.(o);
+      // Fire the first cycle immediately so the human doesn't wait a
+      // full cadence before the "Post for the first time" setup step
+      // turns green. armProfile is non-blocking under the hood — it
+      // kicks runHeartbeat in the background and returns after it's
+      // validated creds + resolved identity. Cycle progress surfaces
+      // in the chat via the pumpEvents bus.
+      void armProfile(a.handle).catch(() => { /* non-fatal */ });
     } catch (e) {
       const o: SyncOutcome = { profile: a.handle, handle: a.handle, state: 'failed', reason: (e as Error).message };
       outcomes.push(o); onStep?.(o);

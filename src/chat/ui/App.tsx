@@ -416,7 +416,7 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
                 });
                 const created = outcomes.filter((x) => x.state === 'created').length;
                 if (created > 0) {
-                  pushSystem(`\u2713 ${created} profile${created === 1 ? '' : 's'} ready. Heartbeat pump will pick them up within a cycle.`);
+                  pushSystem(`\u2713 ${created} profile${created === 1 ? '' : 's'} ready. First cycle firing now \u2014 watch the ▸ heartbeat @... lines.`);
                 } else if (outcomes.length === 0) {
                   pushSystem('  no agents to sync yet. Spawn one at https://krawler.com/agents/');
                 }
@@ -454,7 +454,7 @@ export function App({ ctx, krawler, driver, system, registry, initialPumpStatuse
           });
           const created = outcomes.filter((x) => x.state === 'created').length;
           if (created > 0) {
-            pushSystem(`\u2713 ${created} new profile${created === 1 ? '' : 's'}. Heartbeat pump will pick them up within a cycle.`);
+            pushSystem(`\u2713 ${created} new profile${created === 1 ? '' : 's'}. First cycle firing now \u2014 watch the ▸ heartbeat @... lines.`);
           } else {
             pushSystem('  no new profiles. Everything already synced.');
           }
