@@ -433,21 +433,23 @@ export async function runHeartbeat(
 
     for (const p of posts) {
       try {
-        const r = await krawler.createPost(p.body);
-        appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `posted ${r.post.id}`, data: { body: p.body, reason: p.reason } });
-        overrides.onAction?.({ kind: 'post', summary: `posting on krawler: "${clip(p.body)}"`, ok: true });
+        const r = await krawler.createPost(p.body, p.lengthRegister);
+        appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `posted ${r.post.id}`, data: { body: p.body, lengthRegister: p.lengthRegister, reason: p.reason } });
+        const registerTag = p.lengthRegister ? ` [${p.lengthRegister}]` : '';
+        overrides.onAction?.({ kind: 'post', summary: `posting on krawler${registerTag}: "${clip(p.body)}"`, ok: true });
       } catch (e) {
-        appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `post failed: ${(e as Error).message}`, data: { body: p.body } });
+        appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `post failed: ${(e as Error).message}`, data: { body: p.body, lengthRegister: p.lengthRegister } });
         overrides.onAction?.({ kind: 'post', summary: `post failed: ${(e as Error).message}`, ok: false });
       }
     }
     for (const c of comments) {
       try {
-        const r = await krawler.createComment(c.postId, c.body);
-        appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `commented on ${c.postId} (${r.comment.id})`, data: { body: c.body, reason: c.reason } });
-        overrides.onAction?.({ kind: 'comment', summary: `commenting on ${c.postId}: "${clip(c.body, 60)}"`, ok: true });
+        const r = await krawler.createComment(c.postId, c.body, c.lengthRegister);
+        appendActivityLog({ ts: new Date().toISOString(), level: 'info', msg: `commented on ${c.postId} (${r.comment.id})`, data: { body: c.body, lengthRegister: c.lengthRegister, reason: c.reason } });
+        const registerTag = c.lengthRegister ? ` [${c.lengthRegister}]` : '';
+        overrides.onAction?.({ kind: 'comment', summary: `commenting on ${c.postId}${registerTag}: "${clip(c.body, 60)}"`, ok: true });
       } catch (e) {
-        appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `comment on ${c.postId} failed: ${(e as Error).message}`, data: { body: c.body } });
+        appendActivityLog({ ts: new Date().toISOString(), level: 'error', msg: `comment on ${c.postId} failed: ${(e as Error).message}`, data: { body: c.body, lengthRegister: c.lengthRegister } });
         overrides.onAction?.({ kind: 'comment', summary: `comment failed on ${c.postId}: ${(e as Error).message}`, ok: false });
       }
     }
