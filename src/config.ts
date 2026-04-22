@@ -281,19 +281,66 @@ function migrateProviderKeysToShared(): void {
   } catch { /* non-fatal */ }
 }
 
+// Sensible default model when the on-disk slug clearly belongs to a
+// different provider (e.g. provider was flipped to ollama but the
+// anthropic/claude-opus-4.7 slug was left behind). Kept in sync with
+// MODEL_SUGGESTIONS in src/model.ts but duplicated here to avoid an
+// import cycle.
+const DEFAULT_MODEL_BY_PROVIDER: Record<Provider, string> = {
+  anthropic: 'claude-opus-4-7',
+  openai: 'gpt-4o',
+  google: 'gemini-2.5-pro',
+  openrouter: 'anthropic/claude-opus-4.7',
+  ollama: 'llama3.3',
+};
+
+// Known openrouter-style vendor prefixes. A slug carrying one of these
+// belongs to openrouter, not to a bare Anthropic/OpenAI/Google/Ollama
+// model catalogue.
+const OPENROUTER_VENDOR_PREFIXES = [
+  'anthropic/',
+  'openai/',
+  'google/',
+  'meta-llama/',
+  'moonshotai/',
+  'deepseek/',
+  'mistralai/',
+  'minimax/',
+  'cohere/',
+  'microsoft/',
+  'perplexity/',
+  'x-ai/',
+  'qwen/',
+];
+
+function hasOpenrouterVendorPrefix(model: string): boolean {
+  return OPENROUTER_VENDOR_PREFIXES.some((p) => model.startsWith(p));
+}
+
 // Rewrite model slugs so they match what the selected provider actually
 // serves. The direct Anthropic API uses hyphen-separated versions
 // (claude-opus-4-7); openrouter uses dot-separated versions with a
 // vendor prefix (anthropic/claude-opus-4.7). Mismatched slugs 404
 // silently on openrouter as "Provider returned error" — 0.5.x–0.7.1
 // shipped with broken default suggestions that produced exactly this.
-// This runs on every loadConfig, so upgrading to 0.7.2 repairs in place.
+// This runs on every loadConfig, so upgrading self-repairs in place.
+//
+// Beyond the anthropic↔openrouter repair, this also catches
+// cross-provider orphans: if the stored slug obviously belongs to a
+// DIFFERENT provider than the one now selected (e.g. provider=ollama
+// paired with anthropic/claude-opus-4.7 left over from an anthropic
+// install), the slug is reset to that provider's default rather than
+// left to 404 or 500 on every request.
 export function normalizeModelForProvider(provider: Provider, model: string): string {
   if (!model) return model;
   if (provider === 'openrouter') {
     let slug = model;
     // Bare Anthropic slug (no vendor prefix) on openrouter: add the prefix.
     if (/^claude-/.test(slug)) slug = `anthropic/${slug}`;
+    // Bare OpenAI slug: add openai/ prefix.
+    else if (/^(gpt-|o[13](-|$)|chatgpt-)/i.test(slug)) slug = `openai/${slug}`;
+    // Bare Google slug: add google/ prefix.
+    else if (/^gemini-/i.test(slug)) slug = `google/${slug}`;
     // Convert "anthropic/claude-<family>-<major>-<minor>" (hyphen) →
     // "anthropic/claude-<family>-<major>.<minor>" (dot). The regex only
     // touches the single version pair to avoid clobbering slugs like
@@ -305,6 +352,11 @@ export function normalizeModelForProvider(provider: Provider, model: string): st
     return slug;
   }
   if (provider === 'anthropic') {
+    // A non-anthropic openrouter vendor prefix (openai/..., google/...)
+    // belongs to openrouter, not the direct Anthropic API — reset.
+    if (hasOpenrouterVendorPrefix(model) && !model.startsWith('anthropic/')) {
+      return DEFAULT_MODEL_BY_PROVIDER.anthropic;
+    }
     // Direct Anthropic API doesn't want the vendor prefix and wants
     // hyphens. Only convert dot → hyphen on the known version pair
     // so custom dated slugs (claude-opus-4-5-20250929) stay intact.
@@ -313,7 +365,33 @@ export function normalizeModelForProvider(provider: Provider, model: string): st
       /^(claude-(?:opus|sonnet|haiku))-(\d+)\.(\d+)(?=$|-)/,
       '$1-$2-$3',
     );
+    // After stripping, the slug must look like a claude-* model. Anything
+    // else (gpt-, gemini-, llama3) is a cross-provider orphan.
+    if (!/^claude-/.test(slug)) return DEFAULT_MODEL_BY_PROVIDER.anthropic;
     return slug;
+  }
+  if (provider === 'openai') {
+    if (hasOpenrouterVendorPrefix(model)) return DEFAULT_MODEL_BY_PROVIDER.openai;
+    if (!/^(gpt-|o[13](-|$)|chatgpt-|text-|davinci|babbage|ada)/i.test(model)) {
+      return DEFAULT_MODEL_BY_PROVIDER.openai;
+    }
+    return model;
+  }
+  if (provider === 'google') {
+    if (hasOpenrouterVendorPrefix(model)) return DEFAULT_MODEL_BY_PROVIDER.google;
+    if (!/^gemini-/i.test(model)) return DEFAULT_MODEL_BY_PROVIDER.google;
+    return model;
+  }
+  if (provider === 'ollama') {
+    // Ollama tags look like `llama3.3`, `qwen2.5:14b`, `mistral:latest`,
+    // or (rarely) `user/custom-model`. They never carry a known
+    // openrouter vendor prefix, and they don't use the bare
+    // claude-/gpt-/gemini- families from the hosted APIs.
+    if (hasOpenrouterVendorPrefix(model)) return DEFAULT_MODEL_BY_PROVIDER.ollama;
+    if (/^(claude-|gpt-|gemini-|o[13](-|$)|chatgpt-)/i.test(model)) {
+      return DEFAULT_MODEL_BY_PROVIDER.ollama;
+    }
+    return model;
   }
   return model;
 }
@@ -384,6 +462,12 @@ export function saveConfig(c: Partial<Config>): Config {
     delete (current as Record<string, unknown>)[f];
   }
   const mergedProfile = configSchema.parse({ ...current, ...profilePartial, ...shared });
+  // Cross-provider orphan guard. If the resulting (provider, model)
+  // pair is a mismatch — e.g. saveConfig({ provider: 'ollama' }) on a
+  // profile whose model is still anthropic/claude-opus-4.7 — repair
+  // at write time so the on-disk file is never in a broken state,
+  // instead of relying on the next loadConfig to notice.
+  mergedProfile.model = normalizeModelForProvider(mergedProfile.provider, mergedProfile.model);
   // Write out the per-profile slice (without the shared keys) so the
   // on-disk file stays minimal. We still return the fully-merged view
   // for the caller.
