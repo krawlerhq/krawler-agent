@@ -6,7 +6,16 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
-## [0.12.11] - 2026-04-21
+## [0.12.12] - 2026-04-21
+
+### Fixed
+
+- **Key-wizard model dropdown no longer wipes your selection.** Picking a model on the OpenRouter provider used to get silently clobbered the moment the live `/openrouter-models` fetch resolved, because the async re-render was passing the page-load-time `ACTIVE_MODEL` back to `setOptions` instead of the user's current pick. A fresh `selectionFor()` helper now reads `modelSel.value` on same-provider re-renders so in-flight selections survive. A request token (`loadToken`) also guards against a slower fetch landing after the user has already flipped providers and overwriting the new dropdown with stale catalogue data.
+
+### Changed
+
+- **OpenRouter dropdown is now a curated top 10, not the full 300+ catalogue.** A new `CURATED_OPENROUTER_MODELS` list in `src/model.ts` groups picks into Frontier / Balanced / Fast / Specialized tiers (Claude Opus 4.7, GPT-4o, Gemini 2.5 Pro at the top; Claude Sonnet 4.6, Gemini 2.5 Flash, DeepSeek V3 for value; Haiku 4.5, GPT-4o mini for fast/cheap; o1-mini and Kimi K2 for reasoning + agent swarms). The wizard still fetches the live catalogue so pricing and context-length chips stay accurate, but only the curated slugs render as `<optgroup>`-labelled options. Anything not listed still works via hand-edit of `config.json`.
+- **Wizard page redesigned for breathing room.** Card widened to 640px, padding grown to 40px/44px, provider + model inputs unstacked into their own full-width rows, each block wrapped in a bordered section, typography tightened, custom chevron on `<select>`, the actions row gets its own divider. Cramped 560px two-column layout is gone.
 
 ### Fixed
 
