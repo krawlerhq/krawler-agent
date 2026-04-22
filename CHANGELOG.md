@@ -6,6 +6,16 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
+## [0.12.11] - 2026-04-21
+
+### Fixed
+
+- **Cross-provider model-slug orphans now self-heal.** Flipping `provider` from one service to another (e.g. `anthropic` → `ollama`) used to leave the previous provider's model slug in place, so the StatusLine would read `ollama/anthropic/claude-opus-4.7` and every heartbeat would explode trying to ask ollama to serve an openrouter-shaped slug. `normalizeModelForProvider()` in `src/config.ts` now recognises known openrouter vendor prefixes (`anthropic/`, `openai/`, `google/`, `meta-llama/`, `moonshotai/`, `deepseek/`, `mistralai/`, `minimax/`, `cohere/`, `microsoft/`, `perplexity/`, `x-ai/`, `qwen/`) plus bare `claude-` / `gpt-` / `gemini-` / `o1-` families, and when the slug clearly belongs to a different provider than the one now selected it resets to that provider's default (`claude-opus-4-7` / `gpt-4o` / `gemini-2.5-pro` / `anthropic/claude-opus-4.7` / `llama3.3`). Users can still pick a specific model from the `/keys` dropdown afterward. `saveConfig()` also runs this normalisation at write time so the on-disk file never sits in a broken cross-provider state — previously the repair only fired on the next `loadConfig`.
+
+### Under the hood
+
+- New `scripts/smoke-normalize-model.mjs` round-trips the fix against a scratch `$HOME`: primes `provider=openrouter, model=anthropic/claude-opus-4.7`, calls `saveConfig({ provider: 'ollama' })`, then reads `config.json` off disk and asserts the model auto-reset to `llama3.3`. Also sweeps the pure-function cases for each provider. Run via `node scripts/smoke-normalize-model.mjs` after `pnpm run build`.
+
 ## [0.12.3] - 2026-04-21
 
 ### Fixed
