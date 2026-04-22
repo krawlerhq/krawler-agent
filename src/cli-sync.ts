@@ -94,27 +94,46 @@ export async function syncPlatformAgents(
       // armed it yet — this is the common case when /sync runs after
       // the user spawned an agent on krawler.com and the krawler CLI
       // was already running (boot-time pump walked the old profile
-      // list). Fire armProfile unconditionally; it's idempotent
-      // enough — scheduleNext checks the active-timers map before
-      // arming a second timer, and running an extra runHeartbeat is
-      // exactly what the user wants ("first post, now"). Cycle
-      // progress surfaces in chat via the pumpEvents bus.
-      void armProfile(a.handle).catch(() => { /* non-fatal */ });
-      const o: SyncOutcome = { profile: a.handle, handle: a.handle, state: 'skipped', reason: 'already local \u2014 kicked a cycle' };
+      // list). Await armProfile so the /sync log surfaces the ACTUAL
+      // outcome (was 'kicked a cycle' unconditionally through 0.12.9,
+      // which silently lied when armProfile's pre-flight rejected
+      // missing creds — user saw green log lines but the dashboard
+      // kept showing "sleeping" because no heartbeat ever fired).
+      let reason = 'already local';
+      try {
+        const status = await armProfile(a.handle);
+        reason = status.state === 'pumping'
+          ? 'already local \u2014 kicked a cycle'
+          : `already local \u2014 cannot heartbeat (${status.reason}). Run /keys to add the missing key.`;
+      } catch (e) {
+        reason = `already local \u2014 arm failed: ${(e as Error).message}`;
+      }
+      const o: SyncOutcome = { profile: a.handle, handle: a.handle, state: 'skipped', reason };
       outcomes.push(o); onStep?.(o); continue;
     }
     try {
       const issued = await client.issueCliKey(auth.token, a.handle);
       writeProfileConfig(a.handle, issued.apiKey);
-      const o: SyncOutcome = { profile: a.handle, handle: a.handle, state: 'created' };
-      outcomes.push(o); onStep?.(o);
       // Fire the first cycle immediately so the human doesn't wait a
       // full cadence before the "Post for the first time" setup step
-      // turns green. armProfile is non-blocking under the hood — it
-      // kicks runHeartbeat in the background and returns after it's
-      // validated creds + resolved identity. Cycle progress surfaces
-      // in the chat via the pumpEvents bus.
-      void armProfile(a.handle).catch(() => { /* non-fatal */ });
+      // turns green. armProfile is non-blocking on runHeartbeat itself
+      // (it kicks that in the background) but DOES await the creds +
+      // /me checks, so awaiting it here tells us if the new profile
+      // is ready to cycle. If not (e.g. no Anthropic key yet in
+      // shared-keys.json), we emit a 'created' outcome with a reason
+      // suffix so the human knows the agent was created locally but
+      // will sit idle until they add the missing key.
+      let note = '';
+      try {
+        const status = await armProfile(a.handle);
+        if (status.state !== 'pumping') {
+          note = ` (cannot heartbeat yet: ${status.reason}. Run /keys to add the missing key.)`;
+        }
+      } catch { /* non-fatal — profile is still written */ }
+      const o: SyncOutcome = note
+        ? { profile: a.handle, handle: a.handle, state: 'skipped', reason: `created locally${note}` }
+        : { profile: a.handle, handle: a.handle, state: 'created' };
+      outcomes.push(o); onStep?.(o);
     } catch (e) {
       const o: SyncOutcome = { profile: a.handle, handle: a.handle, state: 'failed', reason: (e as Error).message };
       outcomes.push(o); onStep?.(o);
