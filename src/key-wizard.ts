@@ -31,6 +31,7 @@ import open from 'open';
 import { loadConfig, loadSharedKeys, normalizeModelForProvider, PROVIDERS, saveConfig, saveSharedKeys } from './config.js';
 import type { Provider, SharedKeys } from './config.js';
 import { MODEL_SUGGESTIONS } from './model.js';
+import { listProfiles, withProfile } from './profile-context.js';
 
 export interface WizardResult {
   saved: boolean;
@@ -52,7 +53,7 @@ export const PREFERRED_WIZARD_PORTS = [4242, 4243, 4244] as const;
 // set — they can leave those blank to keep them. The active provider
 // and model come from the CURRENT profile's config.json so the form
 // opens on whatever the agent is actively using right now.
-function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel: string, activeProfile: string): string {
+function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel: string, activeProfile: string, profileCount: number): string {
   const mask = (k: string): string => {
     if (!k) return '';
     if (k.length < 10) return '\u2022\u2022\u2022\u2022\u2022';
@@ -110,6 +111,10 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
     h2:first-of-type { margin-top: 0; }
     .pair { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: end; }
     @media (max-width: 480px) { .pair { grid-template-columns: 1fr; } }
+    .checkline { margin-top: 12px; }
+    .check { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-weight: 500; font-size: 0.85rem; color: var(--text-2); text-transform: none; letter-spacing: 0; margin-bottom: 0; }
+    .check input { margin-top: 3px; accent-color: var(--brand); }
+    .check code { font-family: var(--mono); background: var(--bg); padding: 0 4px; border-radius: 3px; }
     .hint { font-size: 0.75rem; color: var(--text-3); margin-top: 4px; }
     .hint code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); }
     .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
@@ -144,6 +149,13 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
           <div class="hint" id="modelHint">Tip: for OpenRouter, options are sorted cheapest-first. Kimi, MiniMax, DeepSeek, Llama &amp; Qwen are usually the best value.</div>
         </div>
       </div>
+      ${profileCount > 1 ? `
+      <div class="row checkline">
+        <label class="check">
+          <input type="checkbox" id="applyAll" name="applyAll" value="1" />
+          <span>Apply provider + model to all ${profileCount} local profiles (not just <code>${activeProfile}</code>). Keys are always shared.</span>
+        </label>
+      </div>` : ''}
 
       <h2>API keys</h2>
       ${fieldHtml}
@@ -239,6 +251,13 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
         const data = {};
         for (const el of form.elements) {
           if (!el.name) continue;
+          if (el.type === 'checkbox') {
+            // Only send checked boxes. Without this branch, el.value is
+            // always '1' regardless of checked state, which would make
+            // every checkbox look checked server-side.
+            if (el.checked) data[el.name] = '1';
+            continue;
+          }
           const v = (el.value || '').trim();
           if (v) data[el.name] = v;
         }
@@ -247,9 +266,13 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
           const res = await fetch('/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
           if (!res.ok) throw new Error('save failed');
           const body = await res.json().catch(function () { return {}; });
-          const suffix = body && body.model ? ' model: ' + body.model : '';
+          let suffix = '';
+          if (body && body.model) {
+            const n = (body.appliedProfiles || []).length;
+            suffix = ' model: ' + body.model + (n > 1 ? ' \u00b7 applied to ' + n + ' profiles' : '');
+          }
           setStatus('\u2713 saved.' + suffix + ' You can close this tab and return to the terminal.', 'ok');
-          setTimeout(function () { try { window.close(); } catch (e) {} }, 1500);
+          setTimeout(function () { try { window.close(); } catch (e) {} }, 1800);
         } catch (err) {
           setStatus('save failed: ' + (err.message || 'unknown'), 'err');
         }
@@ -392,7 +415,13 @@ function handleRequest(req: import('node:http').IncomingMessage, res: import('no
     // on-disk state (useful if the user edited values out-of-band
     // between page loads, or switched profiles via env var).
     const cfg = loadConfig();
-    const body = renderPage(loadSharedKeys(), cfg.provider, cfg.model, serverState.profile);
+    // Count distinct local profiles so the page can decide whether to
+    // show the "apply to all" checkbox (1 profile = nothing to fan to).
+    // The active profile is always counted even if listProfiles misses
+    // it (fresh install where config.json hasn't been written yet).
+    const profileSet = new Set<string>(listProfiles());
+    profileSet.add(serverState.profile);
+    const body = renderPage(loadSharedKeys(), cfg.provider, cfg.model, serverState.profile, profileSet.size);
     res.writeHead(200, {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store',
@@ -422,7 +451,7 @@ function handleRequest(req: import('node:http').IncomingMessage, res: import('no
     req.on('data', (chunk) => { raw += chunk.toString('utf8'); if (raw.length > 16384) req.destroy(); });
     req.on('end', () => {
       try {
-        const obj = JSON.parse(raw || '{}') as Partial<SharedKeys> & { provider?: string; model?: string };
+        const obj = JSON.parse(raw || '{}') as Partial<SharedKeys> & { provider?: string; model?: string; applyAll?: string };
         const updates: Partial<SharedKeys> = {};
         if (obj.anthropicApiKey)  updates.anthropicApiKey  = String(obj.anthropicApiKey).trim();
         if (obj.openaiApiKey)     updates.openaiApiKey     = String(obj.openaiApiKey).trim();
@@ -439,21 +468,50 @@ function handleRequest(req: import('node:http').IncomingMessage, res: import('no
         // while provider=anthropic gets rewritten for the direct API
         // (and vice versa) — same repair path loadConfig() already
         // does, just at write time so the on-disk file is clean.
+        //
+        // When applyAll is set, fan the provider+model write out across
+        // every local profile. Common case: the human spawned 10 agents
+        // on krawler.com, /sync created 10 profiles (each inheriting
+        // provider=anthropic + model=claude-opus-4-7 from personal),
+        // Opus hurts, they want everyone on Kimi K2 in one click. Keys
+        // are ALWAYS shared (one shared-keys.json per machine), so the
+        // checkbox only governs the per-profile provider/model fields.
         let mergedProvider: Provider | undefined;
         let mergedModel: string | undefined;
+        let appliedProfiles: string[] = [];
         const wantsProvider = typeof obj.provider === 'string' && (PROVIDERS as readonly string[]).includes(obj.provider);
         const wantsModel = typeof obj.model === 'string' && obj.model.trim().length > 0;
+        const wantsApplyAll = Boolean(obj.applyAll);
         if (wantsProvider || wantsModel) {
           const current = loadConfig();
           const nextProvider: Provider = wantsProvider ? (obj.provider as Provider) : current.provider;
           const nextModelRaw = wantsModel ? String(obj.model).trim() : current.model;
           const nextModel = normalizeModelForProvider(nextProvider, nextModelRaw);
-          const saved = saveConfig({ provider: nextProvider, model: nextModel });
-          mergedProvider = saved.provider;
-          mergedModel = saved.model;
+          if (wantsApplyAll) {
+            const profiles = listProfiles();
+            // If this is a fresh install with only the default profile
+            // on disk, listProfiles can return empty (no config.json
+            // yet). Fall back to the active profile so the save still
+            // lands somewhere observable. Always include the currently-
+            // active profile so its config.json gets updated even if
+            // the profile scan missed it (e.g. transient ENOENT).
+            const seen = new Set<string>(profiles);
+            seen.add(serverState.profile);
+            for (const name of seen) {
+              const saved = withProfile(name, () => saveConfig({ provider: nextProvider, model: nextModel })) as ReturnType<typeof saveConfig>;
+              mergedProvider = saved.provider;
+              mergedModel = saved.model;
+              appliedProfiles.push(name);
+            }
+          } else {
+            const saved = saveConfig({ provider: nextProvider, model: nextModel });
+            mergedProvider = saved.provider;
+            mergedModel = saved.model;
+            appliedProfiles = [serverState.profile];
+          }
         }
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, provider: mergedProvider, model: mergedModel }));
+        res.end(JSON.stringify({ ok: true, provider: mergedProvider, model: mergedModel, appliedProfiles }));
         const waiters = serverState.waiters.splice(0);
         for (const w of waiters) w({ saved: true, keys: mergedKeys, url: serverState.url });
       } catch (e) {
