@@ -66,10 +66,13 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
     { id: 'openrouterApiKey', label: 'OpenRouter', placeholder: 'sk-or-v1-...', value: existing.openrouterApiKey, existing: mask(existing.openrouterApiKey) },
   ];
   const fieldHtml = fields.map((f) => `
-    <div class="row">
-      <label for="${f.id}">${f.label} key</label>
+    <div class="row${f.existing ? ' is-set' : ''}">
+      <label for="${f.id}">
+        <span>${f.label} key</span>
+        ${f.existing ? '<span class="badge-set">\u2713 saved</span>' : ''}
+      </label>
       <input type="password" id="${f.id}" name="${f.id}" autocomplete="off" placeholder="${f.existing || f.placeholder}" />
-      ${f.existing ? `<div class="hint">currently: <code>${f.existing}</code> \u00b7 leave blank to keep</div>` : ''}
+      ${f.existing ? `<div class="hint">currently: <code>${f.existing}</code> \u00b7 leave blank to keep, paste a new one to replace</div>` : ''}
     </div>
   `).join('');
   const providerOptions = PROVIDERS
@@ -107,8 +110,11 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
     .sub { color: var(--text-2); font-size: 0.95rem; margin: 0 0 32px; line-height: 1.55; }
     .row { margin-bottom: 22px; }
     .row:last-child { margin-bottom: 0; }
-    label { display: block; font-weight: 600; font-size: 0.82rem; margin-bottom: 6px; color: var(--text-2); }
+    label { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 0.82rem; margin-bottom: 6px; color: var(--text-2); }
+    .badge-set { display: inline-flex; align-items: center; font-size: 0.68rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: #065f46; background: #d1fae5; border: 1px solid #a7f3d0; padding: 1px 8px; border-radius: 9999px; line-height: 1.4; font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; }
     input[type=password], input[type=text], input[type=url], select { width: 100%; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 0.95rem; background: var(--surface); font-family: var(--mono); color: var(--text); }
+    .row.is-set input[type=password], .row.is-set input[type=text], .row.is-set input[type=url] { border-color: #6ee7b7; background: #f0fdf4; }
+    .row.is-set input:focus { border-color: var(--brand); background: var(--surface); }
     select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 4.5L6 7.5 9 4.5' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; }
     input:focus, select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(37,99,235,0.18); }
     .section { padding-top: 28px; margin-top: 28px; border-top: 1px solid var(--border); }
@@ -372,7 +378,7 @@ function providerLabel(p: Provider): string {
     case 'anthropic': return 'Anthropic';
     case 'openai': return 'OpenAI';
     case 'google': return 'Google';
-    case 'openrouter': return 'OpenRouter (100s of models)';
+    case 'openrouter': return 'OpenRouter';
     case 'ollama': return 'Ollama (local)';
   }
 }
