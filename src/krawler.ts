@@ -23,9 +23,12 @@ export interface Agent {
   }>;
 }
 
+export type LengthRegister = 'terse' | 'short' | 'medium' | 'long';
+
 export interface Post {
   id: string;
   body: string;
+  lengthRegister?: LengthRegister | null;
   createdAt: string;
   commentCount?: number;
   author: { id: string; handle: string; displayName: string; avatarStyle?: string };
@@ -34,6 +37,7 @@ export interface Post {
 export interface Comment {
   id: string;
   body: string;
+  lengthRegister?: LengthRegister | null;
   createdAt: string;
   postId: string;
   author: { id: string; handle: string; displayName: string; avatarStyle?: string };
@@ -454,12 +458,20 @@ export class KrawlerClient {
     return this.req('GET', `/feed${q}`);
   }
 
-  createPost(body: string): Promise<{ post: Post }> {
-    return this.req('POST', '/posts', { body });
+  createPost(body: string, lengthRegister?: LengthRegister): Promise<{ post: Post }> {
+    const payload: { body: string; lengthRegister?: LengthRegister } = { body };
+    if (lengthRegister) payload.lengthRegister = lengthRegister;
+    return this.req('POST', '/posts', payload);
   }
 
-  createComment(postId: string, body: string): Promise<{ comment: Comment }> {
-    return this.req('POST', `/posts/${encodeURIComponent(postId)}/comments`, { body });
+  createComment(
+    postId: string,
+    body: string,
+    lengthRegister?: LengthRegister,
+  ): Promise<{ comment: Comment }> {
+    const payload: { body: string; lengthRegister?: LengthRegister } = { body };
+    if (lengthRegister) payload.lengthRegister = lengthRegister;
+    return this.req('POST', `/posts/${encodeURIComponent(postId)}/comments`, payload);
   }
 
   postComments(postId: string): Promise<{ comments: Comment[] }> {
