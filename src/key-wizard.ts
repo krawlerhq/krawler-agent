@@ -30,7 +30,7 @@ import open from 'open';
 
 import { loadConfig, loadSharedKeys, normalizeModelForProvider, PROVIDERS, saveConfig, saveSharedKeys } from './config.js';
 import type { Provider, SharedKeys } from './config.js';
-import { MODEL_SUGGESTIONS } from './model.js';
+import { CURATED_OPENROUTER_MODELS, MODEL_SUGGESTIONS } from './model.js';
 import { listProfiles, withProfile } from './profile-context.js';
 
 export interface WizardResult {
@@ -80,6 +80,7 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
   // form is valid even before the JS hydration runs (and so "Save"
   // without touching anything is a true no-op on model).
   const fallbackMap = JSON.stringify(MODEL_SUGGESTIONS);
+  const curatedOpenrouter = JSON.stringify(CURATED_OPENROUTER_MODELS);
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -99,33 +100,36 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
       --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
     }
     * { box-sizing: border-box; }
-    body { font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 40px 16px; }
-    .card { max-width: 560px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 32px; box-shadow: 0 4px 12px rgba(0,0,0,0.04); }
-    h1 { font-size: 1.35rem; margin: 0 0 8px; font-weight: 700; }
-    .sub { color: var(--text-2); font-size: 0.9rem; margin: 0 0 24px; line-height: 1.5; }
-    .row { margin-bottom: 16px; }
-    label { display: block; font-weight: 600; font-size: 0.85rem; margin-bottom: 4px; color: var(--text-2); }
-    input[type=password], input[type=text], input[type=url], select { width: 100%; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 0.92rem; background: var(--surface); font-family: var(--mono); }
-    input:focus, select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
-    h2 { font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); margin: 24px 0 10px; }
-    h2:first-of-type { margin-top: 0; }
-    .pair { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; align-items: end; }
-    @media (max-width: 480px) { .pair { grid-template-columns: 1fr; } }
-    .checkline { margin-top: 12px; }
-    .check { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; font-weight: 500; font-size: 0.85rem; color: var(--text-2); text-transform: none; letter-spacing: 0; margin-bottom: 0; }
+    body { font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 56px 20px; line-height: 1.5; }
+    .card { max-width: 640px; margin: 0 auto; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 40px 44px; box-shadow: 0 6px 24px rgba(15,23,42,0.05); }
+    @media (max-width: 560px) { .card { padding: 28px 22px; border-radius: 12px; } body { padding: 24px 12px; } }
+    h1 { font-size: 1.5rem; margin: 0 0 10px; font-weight: 700; letter-spacing: -0.01em; }
+    .sub { color: var(--text-2); font-size: 0.95rem; margin: 0 0 32px; line-height: 1.55; }
+    .row { margin-bottom: 22px; }
+    .row:last-child { margin-bottom: 0; }
+    label { display: block; font-weight: 600; font-size: 0.82rem; margin-bottom: 6px; color: var(--text-2); }
+    input[type=password], input[type=text], input[type=url], select { width: 100%; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; font: inherit; font-size: 0.95rem; background: var(--surface); font-family: var(--mono); color: var(--text); }
+    select { cursor: pointer; appearance: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M3 4.5L6 7.5 9 4.5' stroke='%236b7280' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 36px; }
+    input:focus, select:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px rgba(37,99,235,0.18); }
+    .section { padding-top: 28px; margin-top: 28px; border-top: 1px solid var(--border); }
+    .section:first-of-type { padding-top: 0; margin-top: 0; border-top: none; }
+    h2 { font-size: 0.74rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-3); margin: 0 0 16px; }
+    .checkline { margin-top: 16px; }
+    .check { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-weight: 500; font-size: 0.88rem; color: var(--text-2); text-transform: none; letter-spacing: 0; margin-bottom: 0; line-height: 1.45; }
     .check input { margin-top: 3px; accent-color: var(--brand); }
-    .check code { font-family: var(--mono); background: var(--bg); padding: 0 4px; border-radius: 3px; }
-    .hint { font-size: 0.75rem; color: var(--text-3); margin-top: 4px; }
-    .hint code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); }
-    .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 24px; }
-    button { font: inherit; font-size: 0.9rem; font-weight: 600; padding: 9px 18px; border-radius: 9999px; border: none; cursor: pointer; }
+    .check code { font-family: var(--mono); background: var(--bg); padding: 0 5px; border-radius: 4px; font-size: 0.82rem; }
+    .hint { font-size: 0.78rem; color: var(--text-3); margin-top: 6px; line-height: 1.5; }
+    .hint code { background: var(--bg); padding: 1px 5px; border-radius: 4px; font-family: var(--mono); font-size: 0.72rem; }
+    .actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--border); }
+    button { font: inherit; font-size: 0.92rem; font-weight: 600; padding: 10px 22px; border-radius: 9999px; border: none; cursor: pointer; transition: background 0.15s, border-color 0.15s; }
     .primary { background: var(--brand); color: #fff; }
     .primary:hover { background: var(--brand-dark); }
-    .secondary { background: var(--bg); color: var(--text); border: 1px solid var(--border); }
-    .status { font-size: 0.82rem; color: var(--text-3); margin-top: 16px; min-height: 1em; text-align: center; }
+    .secondary { background: var(--surface); color: var(--text-2); border: 1px solid var(--border); }
+    .secondary:hover { border-color: var(--text-3); color: var(--text); }
+    .status { font-size: 0.85rem; color: var(--text-3); margin-top: 18px; min-height: 1.3em; text-align: center; line-height: 1.5; }
     .status.err { color: #b91c1c; }
     .status.ok { color: #166534; }
-    footer { text-align: center; font-size: 0.75rem; color: var(--text-3); margin-top: 16px; line-height: 1.6; }
+    footer { text-align: center; font-size: 0.78rem; color: var(--text-3); margin-top: 20px; line-height: 1.6; }
   </style>
 </head>
 <body>
@@ -137,33 +141,36 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
          GET query string (which is what happened in 0.10.0 because the
          JS function was named 'submit', colliding with HTMLFormElement.submit). -->
     <form id="keyForm" method="post" action="/save" autocomplete="off">
-      <h2>Active model</h2>
-      <div class="pair">
-        <div class="row" style="margin-bottom:0;">
+      <div class="section">
+        <h2>Active model</h2>
+        <div class="row">
           <label for="provider">Provider</label>
           <select id="provider" name="provider">${providerOptions}</select>
         </div>
-        <div class="row" style="margin-bottom:0;">
+        <div class="row">
           <label for="model">Model</label>
           <select id="model" name="model"><option value="${escapeHtml(activeModel)}" selected>${escapeHtml(activeModel) || '(pick a provider first)'}</option></select>
-          <div class="hint" id="modelHint">Tip: for OpenRouter, options are sorted cheapest-first. Kimi, MiniMax, DeepSeek, Llama &amp; Qwen are usually the best value.</div>
+          <div class="hint" id="modelHint">OpenRouter has 300+ models; the dropdown shows a curated top 10 across frontier, balanced and fast tiers. Custom slugs still work; edit <code>config.json</code> for anything not listed.</div>
+        </div>
+        ${profileCount > 1 ? `
+        <div class="row checkline">
+          <label class="check">
+            <input type="checkbox" id="applyAll" name="applyAll" value="1" />
+            <span>Apply provider + model to all ${profileCount} local profiles (not just <code>${activeProfile}</code>). Keys are always shared.</span>
+          </label>
+        </div>` : ''}
+      </div>
+
+      <div class="section">
+        <h2>API keys</h2>
+        ${fieldHtml}
+        <div class="row">
+          <label for="ollamaBaseUrl">Ollama base URL</label>
+          <input type="url" id="ollamaBaseUrl" name="ollamaBaseUrl" placeholder="${existing.ollamaBaseUrl || 'http://localhost:11434'}" value="${existing.ollamaBaseUrl && existing.ollamaBaseUrl !== 'http://localhost:11434' ? existing.ollamaBaseUrl : ''}" />
+          <div class="hint">default: <code>http://localhost:11434</code>. Only change if you run Ollama elsewhere.</div>
         </div>
       </div>
-      ${profileCount > 1 ? `
-      <div class="row checkline">
-        <label class="check">
-          <input type="checkbox" id="applyAll" name="applyAll" value="1" />
-          <span>Apply provider + model to all ${profileCount} local profiles (not just <code>${activeProfile}</code>). Keys are always shared.</span>
-        </label>
-      </div>` : ''}
 
-      <h2>API keys</h2>
-      ${fieldHtml}
-      <div class="row">
-        <label for="ollamaBaseUrl">Ollama base URL</label>
-        <input type="url" id="ollamaBaseUrl" name="ollamaBaseUrl" placeholder="${existing.ollamaBaseUrl || 'http://localhost:11434'}" value="${existing.ollamaBaseUrl && existing.ollamaBaseUrl !== 'http://localhost:11434' ? existing.ollamaBaseUrl : ''}" />
-        <div class="hint">default: <code>http://localhost:11434</code>. Only change if you run Ollama elsewhere.</div>
-      </div>
       <div class="actions">
         <button type="button" class="secondary" id="skipBtn">Skip</button>
         <button type="submit" class="primary" id="saveBtn">Save</button>
@@ -186,6 +193,7 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
       const modelSel = document.getElementById('model');
       const modelHint = document.getElementById('modelHint');
       const FALLBACK = ${fallbackMap};
+      const CURATED_OPENROUTER = ${curatedOpenrouter};
       const ACTIVE_MODEL = ${JSON.stringify(activeModel)};
       function setStatus(msg, kind) {
         status.className = 'status' + (kind ? ' ' + kind : '');
@@ -197,18 +205,45 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
         if (!Number.isFinite(n) || n <= 0) return 'free';
         return '$' + (n * 1e6).toFixed(2) + '/M';
       }
+      // items is a flat list of { id, label, group? }. When any item
+      // carries a group, <optgroup> headers are emitted in declared
+      // order so the wizard can surface "Frontier / Balanced / Fast /
+      // Specialized" tiers without requiring every renderer to know
+      // the grouping scheme.
       function setOptions(items, selected) {
         modelSel.innerHTML = '';
-        for (const it of items) {
-          const opt = document.createElement('option');
-          opt.value = it.id;
-          opt.textContent = it.label;
-          if (it.id === selected) opt.selected = true;
-          modelSel.appendChild(opt);
+        const hasGroups = items.some(function (it) { return it.group; });
+        if (!hasGroups) {
+          for (const it of items) {
+            const opt = document.createElement('option');
+            opt.value = it.id;
+            opt.textContent = it.label;
+            if (it.id === selected) opt.selected = true;
+            modelSel.appendChild(opt);
+          }
+        } else {
+          const order = [];
+          const groupNodes = {};
+          for (const it of items) {
+            const g = it.group || 'Other';
+            if (!groupNodes[g]) {
+              const og = document.createElement('optgroup');
+              og.label = g;
+              groupNodes[g] = og;
+              order.push(g);
+            }
+            const opt = document.createElement('option');
+            opt.value = it.id;
+            opt.textContent = it.label;
+            if (it.id === selected) opt.selected = true;
+            groupNodes[g].appendChild(opt);
+          }
+          for (const g of order) modelSel.appendChild(groupNodes[g]);
         }
         // If the active model isn't in the list (e.g. a custom slug),
         // add it at the top so saving doesn't silently overwrite it.
-        if (selected && !Array.from(modelSel.options).some(function (o) { return o.value === selected; })) {
+        const present = Array.from(modelSel.querySelectorAll('option')).some(function (o) { return o.value === selected; });
+        if (selected && !present) {
           const keep = document.createElement('option');
           keep.value = selected;
           keep.textContent = selected + ' (current)';
@@ -216,35 +251,78 @@ function renderPage(existing: SharedKeys, activeProvider: Provider, activeModel:
           modelSel.insertBefore(keep, modelSel.firstChild);
         }
       }
-      async function loadModelsFor(provider) {
-        const fallback = (FALLBACK[provider] || []).map(function (id) { return { id: id, label: id }; });
+      // Decorate a curated slug with live pricing + context if the
+      // openrouter catalogue fetch returned a matching entry.
+      function decorate(curated, liveById) {
+        const live = liveById[curated.id];
+        let suffix = curated.note ? ' (' + curated.note + ')' : '';
+        if (live) {
+          const inPrice = live.pricing && live.pricing.prompt;
+          const outPrice = live.pricing && live.pricing.completion;
+          if (inPrice != null) suffix += ' \u00b7 ' + fmtPrice(inPrice) + ' in / ' + fmtPrice(outPrice) + ' out';
+          if (live.context_length) suffix += ' \u00b7 ' + Math.round(live.context_length / 1000) + 'k ctx';
+        }
+        return { id: curated.id, label: curated.label + suffix, group: curated.group };
+      }
+      // What slug should stay selected after we rebuild the dropdown?
+      // When provider hasn't changed (async decorate pass), preserve the
+      // user's current pick so re-rendering mid-interaction doesn't wipe
+      // their selection. When provider DID just change, fall back to the
+      // session's ACTIVE_MODEL only if it's a valid slug for the new
+      // provider; otherwise default to the first curated option so the
+      // saved value matches what the human sees.
+      function selectionFor(provider, providerChanged, items) {
+        if (!providerChanged && modelSel.value) return modelSel.value;
+        const ids = items.map(function (it) { return it.id; });
+        if (ACTIVE_MODEL && ids.indexOf(ACTIVE_MODEL) !== -1) return ACTIVE_MODEL;
+        // Pre-change active model might actually still be ACTIVE_MODEL if
+        // it was already this provider's shape. Otherwise first option.
+        return ids[0] || ACTIVE_MODEL;
+      }
+      // Monotonically increasing token. Each loadModelsFor call
+      // increments it and captures its own local copy; any in-flight
+      // fetch whose token no longer matches the current one bails out
+      // before touching the DOM. Prevents the classic "user flips
+      // provider mid-fetch and the stale response overwrites the new
+      // dropdown" race.
+      let loadToken = 0;
+      async function loadModelsFor(provider, providerChanged) {
+        const myToken = ++loadToken;
         if (provider !== 'openrouter') {
-          setOptions(fallback, ACTIVE_MODEL);
-          modelHint.textContent = 'Suggestions for ' + provider + '. Custom slugs still work — edit config.json if the one you want is not listed.';
+          const fallback = (FALLBACK[provider] || []).map(function (id) { return { id: id, label: id }; });
+          setOptions(fallback, selectionFor(provider, providerChanged, fallback));
+          modelHint.textContent = 'Suggestions for ' + provider + '. Custom slugs still work; edit config.json if the one you want is not listed.';
           return;
         }
-        modelHint.textContent = 'loading OpenRouter catalogue\u2026';
+        // Seed immediately with the curated list so the dropdown is
+        // usable before the live fetch resolves (and stays usable if
+        // the fetch fails). Live pricing + context chips land on top
+        // as an enhancement once the catalogue is back.
+        const curatedNoLive = CURATED_OPENROUTER.map(function (c) { return decorate(c, {}); });
+        setOptions(curatedNoLive, selectionFor(provider, providerChanged, curatedNoLive));
+        modelHint.textContent = 'Curated top ' + CURATED_OPENROUTER.length + ' on OpenRouter. Fetching live pricing\u2026';
         try {
           const res = await fetch('/openrouter-models', { cache: 'no-store' });
+          if (myToken !== loadToken) return;
           if (!res.ok) throw new Error('http ' + res.status);
           const payload = await res.json();
-          const items = (payload.models || []).map(function (m) {
-            const inPrice = m.pricing && m.pricing.prompt;
-            const outPrice = m.pricing && m.pricing.completion;
-            const priceLabel = inPrice != null ? ' \u00b7 in ' + fmtPrice(inPrice) + ' / out ' + fmtPrice(outPrice) : '';
-            const ctx = m.context_length ? ' \u00b7 ' + Math.round(m.context_length / 1000) + 'k ctx' : '';
-            return { id: m.id, label: (m.name || m.id) + priceLabel + ctx, sort: Number(inPrice || 0) };
-          });
-          items.sort(function (a, b) { return a.sort - b.sort; });
-          setOptions(items, ACTIVE_MODEL);
-          modelHint.textContent = items.length + ' OpenRouter models, sorted cheapest first. Type to search.';
+          if (myToken !== loadToken) return;
+          const liveById = {};
+          for (const m of (payload.models || [])) liveById[m.id] = m;
+          const items = CURATED_OPENROUTER.map(function (c) { return decorate(c, liveById); });
+          // providerChanged=false here: this is the async decorate pass
+          // for the SAME provider the user picked, so preserve whatever
+          // they've selected since the seed render.
+          setOptions(items, selectionFor('openrouter', false, items));
+          const total = (payload.models || []).length;
+          modelHint.textContent = 'Curated top ' + items.length + ' on OpenRouter (of ' + total + ' total). Custom slugs still work; edit config.json for anything else.';
         } catch (err) {
-          setOptions(fallback, ACTIVE_MODEL);
-          modelHint.textContent = 'live fetch failed (' + (err.message || 'unknown') + ') \u2014 showing fallback list.';
+          if (myToken !== loadToken) return;
+          modelHint.textContent = 'Curated top ' + CURATED_OPENROUTER.length + ' on OpenRouter. Live pricing unavailable (' + (err.message || 'offline') + ').';
         }
       }
-      providerSel.addEventListener('change', function () { loadModelsFor(providerSel.value); });
-      loadModelsFor(providerSel.value);
+      providerSel.addEventListener('change', function () { loadModelsFor(providerSel.value, true); });
+      loadModelsFor(providerSel.value, true);
       form.addEventListener('submit', async function (e) {
         e.preventDefault();
         e.stopPropagation();

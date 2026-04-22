@@ -529,28 +529,52 @@ export const MODEL_SUGGESTIONS: Record<Provider, string[]> = {
   anthropic: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
   openai: ['gpt-4o', 'gpt-4o-mini', 'o1-mini'],
   google: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+  // Derived from CURATED_OPENROUTER_MODELS below — duplicated as a plain
+  // slug list for parity with the other providers and as the offline
+  // fallback when openrouter.ai/api/v1/models can't be reached.
   // NOTE: openrouter uses dot-separated Anthropic versions (claude-opus-4.7),
-  // NOT the hyphen-separated form that the direct Anthropic API expects
-  // (claude-opus-4-7). Mismatched slugs 404 silently as "Provider returned
-  // error". See normalizeModelForProvider() in config.ts for auto-repair.
-  // This list is only a FALLBACK for the key-wizard dropdown when the
-  // live openrouter.ai/api/v1/models fetch fails (offline, rate-limit).
-  // In the happy path the wizard renders the full live catalogue.
+  // NOT the hyphen-separated form that the direct Anthropic API expects.
+  // Mismatched slugs 404 silently as "Provider returned error". See
+  // normalizeModelForProvider() in config.ts for auto-repair.
   openrouter: [
     'anthropic/claude-opus-4.7',
-    'anthropic/claude-sonnet-4.6',
-    'anthropic/claude-haiku-4.5',
     'openai/gpt-4o',
-    'openai/gpt-4o-mini',
-    'openai/o1-mini',
     'google/gemini-2.5-pro',
+    'anthropic/claude-sonnet-4.6',
     'google/gemini-2.5-flash',
-    'moonshotai/kimi-k2',
-    'minimax/minimax-m1',
     'deepseek/deepseek-chat',
-    'mistralai/mistral-large',
-    'meta-llama/llama-3.3-70b-instruct',
-    'qwen/qwen-2.5-72b-instruct',
+    'openai/gpt-4o-mini',
+    'anthropic/claude-haiku-4.5',
+    'openai/o1-mini',
+    'moonshotai/kimi-k2',
   ],
   ollama: ['llama3.3', 'qwen2.5', 'mistral'],
 };
+
+// Curated shortlist for the OpenRouter dropdown in the key wizard.
+// Openrouter exposes 300+ models; dumping all of them into a <select>
+// makes the form a firehose. These ten are the picks worth defaulting
+// to across "pay for peak quality", "best value", "fast + cheap", and
+// "specialized" tiers. Grouped so the wizard can render <optgroup>
+// labels and the reader can scan the list without reading ten similar
+// slugs in a row. The slug must be a real openrouter id; the label
+// is the display text before live pricing + context chips are appended.
+export interface CuratedOpenRouterModel {
+  id: string;
+  label: string;
+  group: 'Frontier' | 'Balanced' | 'Fast' | 'Specialized';
+  note?: string;
+}
+
+export const CURATED_OPENROUTER_MODELS: CuratedOpenRouterModel[] = [
+  { id: 'anthropic/claude-opus-4.7', label: 'Claude Opus 4.7', group: 'Frontier', note: 'top coding + agent workflows' },
+  { id: 'openai/gpt-4o', label: 'GPT-4o', group: 'Frontier', note: 'fast, adaptive general-purpose' },
+  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', group: 'Frontier', note: 'best multimodal + long context' },
+  { id: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6', group: 'Balanced', note: 'best overall value' },
+  { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', group: 'Balanced', note: 'fast + cheap w/ solid reasoning' },
+  { id: 'deepseek/deepseek-chat', label: 'DeepSeek V3', group: 'Balanced', note: '~90% of frontier quality, fraction of cost' },
+  { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini', group: 'Fast', note: 'cheap OpenAI default' },
+  { id: 'anthropic/claude-haiku-4.5', label: 'Claude Haiku 4.5', group: 'Fast', note: 'cheap Claude default' },
+  { id: 'openai/o1-mini', label: 'o1-mini', group: 'Specialized', note: 'reasoning-focused' },
+  { id: 'moonshotai/kimi-k2', label: 'Kimi K2', group: 'Specialized', note: 'agent swarm / multi-agent' },
+];
