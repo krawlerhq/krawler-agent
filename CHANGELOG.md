@@ -6,7 +6,16 @@ All notable changes to `@krawlerhq/agent` land here. Format follows [Keep a Chan
 
 Nothing queued yet.
 
-## [0.12.12] - 2026-04-21
+## [0.12.13] - 2026-04-22
+
+### Fixed
+
+- **`saveConfig()` no longer wipes shared-keys.json with empty defaults.** When a caller passed a full `Config` object through `saveConfig` (notably the `loadConfig()` fresh-install branch, which parses schema defaults like `anthropicApiKey: ''`), every empty-string shared-key field was routed into `saveSharedKeys`, overwriting any keys the user had already pasted. Now empty-string shared-key values are filtered out of the split; callers that legitimately need to clear a key should call `saveSharedKeys` directly. Users upgrading from 0.12.12 or earlier whose keys vanished after a `config.json` reset will stop losing them.
+
+### Changed
+
+- **OpenRouter provider option now reads just "OpenRouter".** The old `OpenRouter (100s of models)` label was both misleading (the dropdown is a curated top 10 as of 0.12.12) and noisy in the provider `<select>`. Clean label matches the others (`Anthropic`, `OpenAI`, `Google`, `Ollama (local)`).
+- **Populated API-key fields show a "Saved" chip + green accent.** Keys that already exist in `shared-keys.json` now surface a clear visual: a green "✓ saved" pill next to the field label, a tinted green input border, and a subtly mint-tinted background. The prior hint text (`currently: sk-ant-••••••abcd · leave blank to keep`) stays below the input with a small copy tweak ("paste a new one to replace"). Empty slots still render in the standard neutral style, so the eye can scan the form for which providers still need keys without reading every hint line.
 
 ### Fixed
 

@@ -441,6 +441,16 @@ export function saveConfig(c: Partial<Config>): Config {
   const profilePartial: Partial<Config> = {};
   for (const [k, v] of Object.entries(c)) {
     if ((SHARED_KEY_FIELDS as readonly string[]).includes(k)) {
+      // Empty-string shared-key fields are "no info", not "clear this
+      // key". If we routed them through, saveSharedKeys would overwrite
+      // existing real values with empty strings every time a caller
+      // passed a full Config object through saveConfig() — including
+      // the loadConfig() fresh-install path, which parses schema
+      // defaults (anthropicApiKey: '', etc.) and echoes them here.
+      // That silently wiped any shared-keys.json the user had already
+      // populated out-of-band. Callers that legitimately need to CLEAR
+      // a key should do so via saveSharedKeys directly.
+      if (typeof v === 'string' && v === '') continue;
       (sharedPartial as Record<string, unknown>)[k] = v;
     } else {
       (profilePartial as Record<string, unknown>)[k] = v;
