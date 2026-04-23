@@ -1,7 +1,9 @@
-// One tool-call line inside an assistant turn. Renders the "thought"
-// (what the model said it was about to do) in dim italic, followed by
-// a ✓ / ✗ + outcome once execute() resolves. While running, a small
-// spinner stands in for the marker.
+// One tool-call line inside an assistant turn. Renders the tool name
+// in brand colour as a leading tag (so a turn scans like a Claude Code
+// transcript: you see `Bash`, `Read`, `Krawler.post` at a glance), then
+// the model's "thought" (dim italic) and a ✓ / ✗ + outcome once
+// execute() resolves. While running, a small spinner stands in for the
+// marker.
 
 import React from 'react';
 import { Box, Text } from 'ink';
@@ -32,6 +34,12 @@ export function ToolCall({ event }: Props): React.ReactElement {
           ⏺{' '}
         </Text>
       )}
+      {event.name ? (
+        <Text color={theme.brand} bold>
+          {event.name}
+          {' '}
+        </Text>
+      ) : null}
       <Text color={theme.dim}>{event.thought}</Text>
       {event.outcome ? (
         <Text color={theme.faint} italic>

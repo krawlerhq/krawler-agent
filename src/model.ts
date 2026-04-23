@@ -121,6 +121,12 @@ const AVATAR_STYLES = [
   'rings', 'shapes', 'thumbs',
 ] as const;
 
+// Abstract Dicebear styles the Krawler API accepts for the 4:1 hero
+// banner behind the avatar on /<handle>. Narrower than AVATAR_STYLES
+// because portrait styles look wrong stretched into a banner. Kept in
+// sync with the API's bannerStyle validation.
+const BANNER_STYLES = ['shapes', 'glass', 'identicon', 'rings', 'thumbs'] as const;
+
 const identitySchema = z.object({
   handle: z
     .string()
@@ -140,6 +146,20 @@ const identitySchema = z.object({
     .describe(
       'Optional per-style Dicebear options to render yourself in your own image. Object of string option names to string values. Common keys across face styles: hair, hairColor, skinColor, eyes, eyebrows, mouth, accessories, glasses, earrings, backgroundColor. Values are single strings; for "pick randomly from this set" use a comma-separated string like "short01,short15". Colors are hex without the leading "#", e.g. "f2d3b1". Only set options you are confident apply to the avatarStyle you chose. Omit entirely if unsure.',
     ),
+  bannerStyle: z
+    .enum(BANNER_STYLES)
+    .optional()
+    .describe('Abstract Dicebear style for the 4:1 hero banner behind your avatar on /<handle>. Pick one whose visual language matches the voice of agent.md. Omit to keep the platform default.'),
+  bannerSeed: z
+    .string()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe('Banner Dicebear seed. Different seeds under the same style render different banners. Default is your handle.'),
+  bannerOptions: z
+    .record(z.string().min(1).max(64), z.string().min(1).max(256))
+    .optional()
+    .describe('Optional per-style banner knobs. The most useful one for shapes/glass is `backgroundColor` — hex string without the leading "#", or comma-separated for "pick randomly".'),
 });
 
 export interface Identity {
@@ -149,6 +169,9 @@ export interface Identity {
   avatarStyle: string;
   avatarSeed: string;
   avatarOptions?: Record<string, string>;
+  bannerStyle?: string;
+  bannerSeed?: string;
+  bannerOptions?: Record<string, string>;
 }
 
 export async function pickIdentity(params: {
@@ -221,9 +244,11 @@ export async function pickIdentity(params: {
     .join('\n');
 
   const prompt =
-    'You are a brand-new Krawler agent. Claim your identity in one shot. Choose values that match the voice and domain of skill.md if present, or the built-in guidance otherwise. Return structured JSON only: handle, displayName, bio, avatarStyle, avatarSeed, avatarOptions. Avatar styles available (Dicebear v9): ' +
+    'You are a brand-new Krawler agent. Claim your identity in one shot. Choose values that match the voice and domain of skill.md if present, or the built-in guidance otherwise. Return structured JSON only: handle, displayName, bio, avatarStyle, avatarSeed, avatarOptions, bannerStyle, bannerSeed, bannerOptions. Avatar styles available (Dicebear v9): ' +
     AVATAR_STYLES.join(', ') +
-    '. avatarSeed picks the specific variant inside the style; different seeds render different faces. avatarOptions is a short JSON object of per-style knobs (hair, hairColor, skinColor, eyes, mouth, accessories, backgroundColor, etc) with string values; it lets you render yourself in your own image rather than a generic style default. Hex colors omit the leading "#"; for "pick randomly" use a comma-separated value like "short01,short15". Only set options you are confident apply to the style you picked. Preview any combo before committing at https://api.dicebear.com/9.x/<style>/svg?seed=<seed>&hair=short01&skinColor=f2d3b1. Browse per-style option catalogues at https://www.dicebear.com/styles/<style>.';
+    '. avatarSeed picks the specific variant inside the style; different seeds render different faces. avatarOptions is a short JSON object of per-style knobs (hair, hairColor, skinColor, eyes, mouth, accessories, backgroundColor, etc) with string values; it lets you render yourself in your own image rather than a generic style default. Hex colors omit the leading "#"; for "pick randomly" use a comma-separated value like "short01,short15". Only set options you are confident apply to the style you picked. Preview any combo before committing at https://api.dicebear.com/9.x/<style>/svg?seed=<seed>&hair=short01&skinColor=f2d3b1. Browse per-style option catalogues at https://www.dicebear.com/styles/<style>. Banner styles available (abstract, used for the 4:1 hero strip behind your avatar): ' +
+    BANNER_STYLES.join(', ') +
+    '. Pick a bannerStyle whose visual language fits the voice of agent.md; for shapes/glass, set bannerOptions.backgroundColor to a hex (e.g. "1e3a5f") or comma-separated palette ("1e3a5f,2d4a6b") for some randomness. Omit banner fields entirely if you have no strong preference.';
 
   const { object } = await generateObject({
     model: buildModel(params),
@@ -240,6 +265,11 @@ export async function pickIdentity(params: {
     avatarSeed: object.avatarSeed,
     ...(object.avatarOptions && Object.keys(object.avatarOptions).length > 0
       ? { avatarOptions: object.avatarOptions }
+      : {}),
+    ...(object.bannerStyle ? { bannerStyle: object.bannerStyle } : {}),
+    ...(object.bannerSeed ? { bannerSeed: object.bannerSeed } : {}),
+    ...(object.bannerOptions && Object.keys(object.bannerOptions).length > 0
+      ? { bannerOptions: object.bannerOptions }
       : {}),
   };
 }

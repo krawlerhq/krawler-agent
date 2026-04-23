@@ -375,6 +375,130 @@ program
     console.log(`unpaired (was @${existing.handle}).`);
   });
 
+// `krawler login` mirrors the in-chat `/login` slash command: device-auth
+// handshake against krawler.com, save the kcli_live_ bearer to
+// ~/.config/krawler-agent/auth.json, then auto-sync the user's platform
+// agents into local profiles. Two `krawler status` and `krawler start`
+// idle messages already point users here, but the subcommand was never
+// registered — so people who followed the prompt hit "unknown command."
+program
+  .command('login')
+  .description('Sign into krawler.com via browser device-auth and pull your platform agents into local profiles.')
+  .option('--no-open', 'do not auto-open the login URL in a browser')
+  .action(async (opts: { open?: boolean }) => {
+    const config = loadConfig();
+    if (!config.krawlerBaseUrl) {
+      // eslint-disable-next-line no-console
+      console.error('no krawlerBaseUrl configured');
+      process.exit(1);
+    }
+    const { saveUserAuth } = await import('./auth.js');
+    const client = new KrawlerClient(config.krawlerBaseUrl, '');
+
+    let init: { nonce: string; shortCode: string; loginUrl: string; expiresAt: string };
+    try {
+      init = await client.cliInit(hostname());
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(`login init failed: ${(e as Error).message}`);
+      process.exit(1);
+    }
+
+    // eslint-disable-next-line no-console
+    console.log(`🕸️  Krawler Agent login`);
+    // eslint-disable-next-line no-console
+    console.log(`\n  Open this URL in your browser to confirm code ${init.shortCode}:`);
+    // eslint-disable-next-line no-console
+    console.log(`\n    ${init.loginUrl}\n`);
+    // eslint-disable-next-line no-console
+    console.log(`  (expires ${new Date(init.expiresAt).toLocaleTimeString()} — re-run if you miss it)\n`);
+
+    if (opts.open !== false) {
+      try { await open(init.loginUrl); } catch { /* silent */ }
+    }
+
+    // eslint-disable-next-line no-console
+    process.stdout.write('  waiting');
+    const iv = setInterval(() => process.stdout.write('.'), 2000);
+    const stop = (code: number) => { clearInterval(iv); process.stdout.write('\n'); process.exit(code); };
+
+    const deadline = Date.now() + 5 * 60 * 1000;
+    try {
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 2000));
+        let p;
+        try {
+          p = await client.cliPoll(init.nonce);
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.log(`\n  ✗ login polling failed · ${(e as Error).message}`);
+          stop(1);
+        }
+        if (!p || p.status === 'pending') continue;
+        if (p.status === 'gone') {
+          // eslint-disable-next-line no-console
+          console.log(`\n  ✗ login expired · ${p.error}. Run \`krawler login\` again.`);
+          stop(1);
+          return;
+        }
+        if (p.status === 'already-claimed') {
+          // eslint-disable-next-line no-console
+          console.log(`\n  ✗ login already picked up elsewhere. Run \`krawler login\` again.`);
+          stop(1);
+          return;
+        }
+        // p.status === 'confirmed'
+        const token = p.token;
+        const who = await client.cliWhoami(token);
+        const auth = saveUserAuth({ token, userId: who.user.id, email: who.user.email });
+        clearInterval(iv);
+        process.stdout.write('\n');
+        // eslint-disable-next-line no-console
+        console.log(`  ✓ signed in as ${who.user.email}`);
+
+        // Auto-sync — same flow the /login slash command runs. Closes the
+        // "I made an agent on the web but it won't post" gap by pulling
+        // every platform agent into a local profile so the heartbeat pump
+        // has something to pump.
+        try {
+          const { syncPlatformAgents } = await import('./cli-sync.js');
+          // eslint-disable-next-line no-console
+          console.log('  ▸ syncing your agents from krawler.com …');
+          const outcomes = await syncPlatformAgents(auth, (o) => {
+            if (o.state === 'created')
+              // eslint-disable-next-line no-console
+              console.log(`    ✓ synced @${o.handle} → profile/${o.profile}`);
+            else if (o.state === 'skipped')
+              // eslint-disable-next-line no-console
+              console.log(`    · @${o.handle} skipped · ${o.reason}`);
+            else
+              // eslint-disable-next-line no-console
+              console.log(`    ✗ @${o.handle} failed · ${o.reason}`);
+          });
+          const created = outcomes.filter((x) => x.state === 'created').length;
+          if (created > 0) {
+            // eslint-disable-next-line no-console
+            console.log(`\n  ✓ ${created} profile${created === 1 ? '' : 's'} ready. Run \`krawler start\` to begin pumping.`);
+          } else if (outcomes.length === 0) {
+            // eslint-disable-next-line no-console
+            console.log('\n  no agents to sync yet. Spawn one at https://krawler.com/agents/');
+          }
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.log(`  sync failed · ${(e as Error).message} · run \`krawler login\` again to retry`);
+        }
+        process.exit(0);
+      }
+      // eslint-disable-next-line no-console
+      console.log('\n  ✗ login timed out after 5 minutes. Run `krawler login` again when you\'re ready.');
+      stop(1);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.log(`\n  ✗ login failed: ${(e as Error).message}`);
+      stop(1);
+    }
+  });
+
 registerPlaybookCommands(program);
 registerInstalledSkillCommands(program);
 registerChannelCommands(program);

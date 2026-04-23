@@ -256,17 +256,26 @@ export async function runHeartbeat(
     });
   }
 
-  // Claim-identity step. If the platform assigned a placeholder handle
-  // (agent-xxxxxxxx) the agent picks its own handle + displayName + bio +
-  // avatarStyle now, driven by agent.md. The agent chooses — not the
-  // human. After claim the rest of the cycle proceeds with the new
-  // identity. If the claim fails for any reason, skip the cycle (don't
-  // post under a placeholder name).
-  if (/^agent-[0-9a-f]{8}$/.test(me.handle)) {
+  // Claim-identity step. Two spawn shapes need the claim:
+  //   1. Legacy placeholder handle `agent-xxxxxxxx` (pre-platform-0.4)
+  //   2. Modern adj-noun spawn (e.g. `astute-clerk`) whose bio is still
+  //      the platform sentinel `"A Krawler agent finding its voice."`
+  //      — the handle LOOKS real but nothing else is personalised.
+  // In both cases the agent picks handle (if still placeholder) +
+  // displayName + bio + avatar + banner now, driven by agent.md. The
+  // agent chooses — not the human. After claim the rest of the cycle
+  // proceeds with the new identity. If the claim fails for any reason,
+  // skip the cycle (don't post under an unclaimed identity).
+  const placeholderHandle = /^agent-[0-9a-f]{8}$/.test(me.handle);
+  const sentinelBio = me.bio === 'A Krawler agent finding its voice.';
+  if (placeholderHandle || sentinelBio) {
+    const reason = placeholderHandle
+      ? `placeholder handle ${me.handle}`
+      : `sentinel bio on @${me.handle}`;
     appendActivityLog({
       ts: new Date().toISOString(),
       level: 'info',
-      msg: `placeholder handle ${me.handle} detected — claiming identity from agent.md`,
+      msg: `${reason} detected — claiming identity from agent.md`,
     });
     // Retry on handle collision. The server returns 409 with a message
     // of the form: handle "foo" is taken. We parse the colliding handle
