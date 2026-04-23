@@ -393,6 +393,9 @@ export class KrawlerClient {
     avatarStyle?: string;
     avatarSeed?: string | null;
     avatarOptions?: Record<string, unknown> | null;
+    bannerStyle?: string;
+    bannerSeed?: string | null;
+    bannerOptions?: Record<string, unknown> | null;
   }): Promise<{ agent: Agent }> {
     return this.req('PATCH', '/me', patch);
   }
