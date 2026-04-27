@@ -10,19 +10,19 @@ importers:
     dependencies:
       '@ai-sdk/anthropic':
         specifier: ^2.0.0
-        version: 2.0.77(zod@3.25.76)
+        version: 2.0.77(zod@4.3.6)
       '@ai-sdk/google':
         specifier: ^2.0.0
-        version: 2.0.70(zod@3.25.76)
+        version: 2.0.70(zod@4.3.6)
       '@ai-sdk/openai':
         specifier: ^2.0.0
-        version: 2.0.103(zod@3.25.76)
+        version: 2.0.103(zod@4.3.6)
       '@openrouter/ai-sdk-provider':
         specifier: ^1.0.0
-        version: 1.5.4(ai@5.0.179(zod@3.25.76))(zod@3.25.76)
+        version: 1.5.4(ai@5.0.179(zod@4.3.6))(zod@4.3.6)
       ai:
         specifier: ^5.0.0
-        version: 5.0.179(zod@3.25.76)
+        version: 5.0.179(zod@4.3.6)
       better-sqlite3:
         specifier: ^12.0.0
         version: 12.9.0
@@ -57,8 +57,8 @@ importers:
         specifier: ^2.3.0
         version: 2.4.0
       zod:
-        specifier: ^3.23.0
-        version: 3.25.76
+        specifier: ^4.3.6
+        version: 4.3.6
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.12
@@ -1150,42 +1150,42 @@ packages:
   yoga-layout@3.2.1:
     resolution: {integrity: sha512-0LPOt3AxKqMdFBZA3HBAt/t/8vIKq7VaQYbuA8WxCgung+p9TVyKRYdpvCb80HcdTN2NkbIKbhNwKUfm3tQywQ==}
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.3.6:
+    resolution: {integrity: sha512-rftlrkhHZOcjDwkGlnUtZZkvaPHCsDATp4pGpuOOMDaTdDDXF91wuVDJoWoPsKX/3YPQ5fHuF3STjcYyKr+Qhg==}
 
 snapshots:
 
-  '@ai-sdk/anthropic@2.0.77(zod@3.25.76)':
+  '@ai-sdk/anthropic@2.0.77(zod@4.3.6)':
     dependencies:
       '@ai-sdk/provider': 2.0.1
-      '@ai-sdk/provider-utils': 3.0.23(zod@3.25.76)
-      zod: 3.25.76
+      '@ai-sdk/provider-utils': 3.0.23(zod@4.3.6)
+      zod: 4.3.6
 
-  '@ai-sdk/gateway@2.0.82(zod@3.25.76)':
+  '@ai-sdk/gateway@2.0.82(zod@4.3.6)':
     dependencies:
       '@ai-sdk/provider': 2.0.1
-      '@ai-sdk/provider-utils': 3.0.23(zod@3.25.76)
+      '@ai-sdk/provider-utils': 3.0.23(zod@4.3.6)
       '@vercel/oidc': 3.1.0
-      zod: 3.25.76
+      zod: 4.3.6
 
-  '@ai-sdk/google@2.0.70(zod@3.25.76)':
+  '@ai-sdk/google@2.0.70(zod@4.3.6)':
     dependencies:
       '@ai-sdk/provider': 2.0.1
-      '@ai-sdk/provider-utils': 3.0.23(zod@3.25.76)
-      zod: 3.25.76
+      '@ai-sdk/provider-utils': 3.0.23(zod@4.3.6)
+      zod: 4.3.6
 
-  '@ai-sdk/openai@2.0.103(zod@3.25.76)':
+  '@ai-sdk/openai@2.0.103(zod@4.3.6)':
     dependencies:
       '@ai-sdk/provider': 2.0.1
-      '@ai-sdk/provider-utils': 3.0.23(zod@3.25.76)
-      zod: 3.25.76
+      '@ai-sdk/provider-utils': 3.0.23(zod@4.3.6)
+      zod: 4.3.6
 
-  '@ai-sdk/provider-utils@3.0.23(zod@3.25.76)':
+  '@ai-sdk/provider-utils@3.0.23(zod@4.3.6)':
     dependencies:
       '@ai-sdk/provider': 2.0.1
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.0.8
-      zod: 3.25.76
+      zod: 4.3.6
 
   '@ai-sdk/provider@2.0.1':
     dependencies:
@@ -1328,15 +1328,15 @@ snapshots:
 
   '@huggingface/jinja@0.2.2': {}
 
-  '@openrouter/ai-sdk-provider@1.5.4(ai@5.0.179(zod@3.25.76))(zod@3.25.76)':
+  '@openrouter/ai-sdk-provider@1.5.4(ai@5.0.179(zod@4.3.6))(zod@4.3.6)':
     dependencies:
       '@openrouter/sdk': 0.1.27
-      ai: 5.0.179(zod@3.25.76)
-      zod: 3.25.76
+      ai: 5.0.179(zod@4.3.6)
+      zod: 4.3.6
 
   '@openrouter/sdk@0.1.27':
     dependencies:
-      zod: 3.25.76
+      zod: 4.3.6
 
   '@opentelemetry/api@1.9.0': {}
 
@@ -1421,13 +1421,13 @@ snapshots:
       - bare-buffer
       - react-native-b4a
 
-  ai@5.0.179(zod@3.25.76):
+  ai@5.0.179(zod@4.3.6):
     dependencies:
-      '@ai-sdk/gateway': 2.0.82(zod@3.25.76)
+      '@ai-sdk/gateway': 2.0.82(zod@4.3.6)
       '@ai-sdk/provider': 2.0.1
-      '@ai-sdk/provider-utils': 3.0.23(zod@3.25.76)
+      '@ai-sdk/provider-utils': 3.0.23(zod@4.3.6)
       '@opentelemetry/api': 1.9.0
-      zod: 3.25.76
+      zod: 4.3.6
 
   ansi-escapes@7.3.0:
     dependencies:
@@ -2198,4 +2198,4 @@ snapshots:
 
   yoga-layout@3.2.1: {}
 
-  zod@3.25.76: {}
+  zod@4.3.6: {}
