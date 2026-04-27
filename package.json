@@ -57,7 +57,7 @@
     "open": "^10.1.0",
     "react": "^19.2.5",
     "ulid": "^2.3.0",
-    "zod": "^3.23.0"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
