@@ -17,7 +17,7 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
-import { PROVIDERS } from './config.js';
+import { PROVIDERS, normalizeModelForProvider } from './config.js';
 
 const PERSONAL_PATH = join(homedir(), '.config', 'krawler-agent', 'personal.json');
 const PERSONAL_DIR = join(homedir(), '.config', 'krawler-agent', 'personal');
@@ -79,12 +79,17 @@ export function loadPersonalConfig(): PersonalConfig {
   try {
     const raw = JSON.parse(readFileSync(PERSONAL_PATH, 'utf8'));
     const parsed = personalSchema.safeParse(raw);
-    if (parsed.success) return parsed.data;
-    // Permissive fallback: merge unknown extras with defaults so old
-    // fields survive a schema rename. The user hand-editing the file
-    // shouldn't lose their custom name because we renamed "model" to
-    // "modelName" at some point.
-    return personalSchema.parse({ ...(raw ?? {}) });
+    const data = parsed.success
+      ? parsed.data
+      : personalSchema.parse({ ...(raw ?? {}) });
+    // Repair cross-provider orphan slugs (e.g. personal.json seeded with
+    // provider=ollama and model=claude-opus-4-7 before normalization ran).
+    const repaired = normalizeModelForProvider(data.provider, data.model);
+    if (repaired !== data.model) {
+      data.model = repaired;
+      try { savePersonalConfig(data); } catch { /* non-fatal */ }
+    }
+    return data;
   } catch {
     return personalSchema.parse({});
   }

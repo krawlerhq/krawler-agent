@@ -88,19 +88,28 @@ export function InputBox({ disabled, onSubmit, placeholder, onSuggestionsChange,
         if (rest) setValue(rest);
         return;
       }
-      if (key.return) {
-        const out = value;
-        setValue('');
-        setCursor(0);
-        onSubmit(out);
-        return;
-      }
       if (key.tab && matches.length > 0) {
         const pick = matches[selected];
         if (pick) {
           setValue(pick.name + ' ');
           setCursor(pick.name.length + 1);
         }
+        return;
+      }
+      if (key.return) {
+        if (matches.length > 0) {
+          const pick = matches[selected];
+          if (pick) {
+            setValue('');
+            setCursor(0);
+            onSubmit(pick.name);
+            return;
+          }
+        }
+        const out = value;
+        setValue('');
+        setCursor(0);
+        onSubmit(out);
         return;
       }
       if (key.upArrow && matches.length > 0) {

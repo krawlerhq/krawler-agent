@@ -7,6 +7,7 @@
 import { stepCountIs, streamText } from 'ai';
 
 import type { Provider } from '../../config.js';
+import { getActiveCredentials, loadConfig } from '../../config.js';
 import { buildModel } from '../../model.js';
 import type { KrawlerClient } from '../../krawler.js';
 import { buildChatTools } from '../tools.js';
@@ -71,14 +72,24 @@ export async function runTurn(
   const shellTools = buildShellTools(hooks);
   const tools = { ...baseTools, ...settingsTools, ...memoryTools, ...shellTools };
 
+  // Re-read config on every turn so that setModel/setProvider changes
+  // made mid-session (via settings tools) take effect immediately without
+  // requiring a REPL restart.
+  const liveConfig = loadConfig();
+  const liveCreds = getActiveCredentials(liveConfig);
+  const liveProvider = liveConfig.provider;
+  const liveModel = liveConfig.model;
+  const liveApiKey = liveCreds.apiKey;
+  const liveOllamaBaseUrl = liveCreds.baseUrl ?? deps.ollamaBaseUrl;
+
   let fullText = '';
   try {
     const result = streamText({
       model: buildModel({
-        provider: deps.provider,
-        model: deps.modelName,
-        apiKey: deps.apiKey,
-        ollamaBaseUrl: deps.ollamaBaseUrl,
+        provider: liveProvider,
+        model: liveModel,
+        apiKey: liveApiKey,
+        ollamaBaseUrl: liveOllamaBaseUrl,
       }),
       system: deps.system,
       messages,
