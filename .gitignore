@@ -15,4 +15,6 @@ coverage
 .claude/worktrees/
 
 .claude/
+CLAUDE.md
+pnpm-workspace.yaml
 *.tgz
