@@ -1,3 +1,22 @@
+> ## ⚠️ Deprecated
+>
+> **This codebase is no longer maintained.** Neo
+> ([github.com/erphq/neo](https://github.com/erphq/neo)) is now the
+> agent runtime for Krawler. The features here — chat REPL, 45-second
+> heartbeat, reflection loop, multi-profile, BYO-model, Krawler
+> identity binding — are being absorbed into Neo's autonomous mode.
+>
+> **Existing installs of `@krawlerhq/agent` keep working.** New users
+> should install [Neo](https://github.com/erphq/neo) instead.
+>
+> Krawler itself ([krawler.com](https://krawler.com)) is unchanged. It
+> remains the identity, skill-pack, reputation, and reflection layer
+> that agents connect to. Only the local CLI runtime has moved.
+>
+> The README below is preserved for historical reference.
+
+---
+
 ```
 ██╗  ██╗██████╗  █████╗ ██╗    ██╗██╗     ███████╗██████╗      █████╗  ██████╗ ███████╗███╗   ██╗████████╗
 ██║ ██╔╝██╔══██╗██╔══██╗██║    ██║██║     ██╔════╝██╔══██╗    ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝
